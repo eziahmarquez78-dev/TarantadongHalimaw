@@ -1,9 +1,8 @@
 const axios = require("axios");
 const ytdl = require("@distube/ytdl-core");
 const fs = require("fs-extra");
-const path = require("path");
-
-async function getStreamAndSize(url, customPath = "") {
+const { getStreamFromURL, downloadFile, formatNumber } = global.utils;
+async function getStreamAndSize(url, path = "") {
 	const response = await axios({
 		method: "GET",
 		url,
@@ -12,67 +11,98 @@ async function getStreamAndSize(url, customPath = "") {
 			'Range': 'bytes=0-'
 		}
 	});
-	if (customPath)
-		response.data.path = customPath;
+	if (path)
+		response.data.path = path;
 	const totalLength = response.headers["content-length"];
 	return {
 		stream: response.data,
-		size: parseInt(totalLength || 0, 10)
+		size: totalLength
 	};
 }
 
 module.exports = {
 	config: {
 		name: "ytb",
-		version: "2.0.0",
-		author: "Sanzu AI",
+		version: "1.16",
+		author: "NTKhang",
 		countDown: 5,
 		role: 0,
 		description: {
-			vi: "Tải video, audio hoặc xem thông tin video trên YouTube sa Sanzu AI",
-			en: "Download video, audio or view video information on YouTube via Sanzu AI"
+			vi: "Tải video, audio hoặc xem thông tin video trên YouTube",
+			en: "Download video, audio or view video information on YouTube",
+			tl: "Mag-download ng video, audio o tingnan ang impormasyon ng video sa YouTube"
 		},
 		category: "media",
 		guide: {
-			vi: "   {pn} [video|-v] [<tên video>|<link video>]\n   {pn} [audio|-a] [<tên video>|<link video>]\n   {pn} [info|-i] [<tên video>|<link video>]",
-			en: "   {pn} [video|-v] [<video name>|<video link>]\n   {pn} [audio|-a] [<video name>|<video link>]\n   {pn} [info|-i] [<video name>|<video link>]\n   Halimbawa:\n    {pn} -v Fallen Kingdom\n    {pn} -a Fallen Kingdom\n    {pn} -i Fallen Kingdom"
+			vi: "   {pn} [video|-v] [<tên video>|<link video>]: dùng để tải video từ youtube."
+				+ "\n   {pn} [audio|-a] [<tên video>|<link video>]: dùng để tải audio từ youtube"
+				+ "\n   {pn} [info|-i] [<tên video>|<link video>]: dùng để xem thông tin video từ youtube"
+				+ "\n   Ví dụ:"
+				+ "\n    {pn} -v Fallen Kingdom"
+				+ "\n    {pn} -a Fallen Kingdom"
+				+ "\n    {pn} -i Fallen Kingdom",
+			en: "   {pn} [video|-v] [<video name>|<video link>]: use to download video from youtube."
+				+ "\n   {pn} [audio|-a] [<video name>|<video link>]: use to download audio from youtube"
+				+ "\n   {pn} [info|-i] [<video name>|<video link>]: use to view video information from youtube"
+				+ "\n   Example:"
+				+ "\n    {pn} -v Fallen Kingdom"
+				+ "\n    {pn} -a Fallen Kingdom"
+				+ "\n    {pn} -i Fallen Kingdom",
+			tl: "   {pn} [video|-v] [<pangalan ng video>|<link ng video>]: para mag-download ng video mula sa youtube."
+				+ "\n   {pn} [audio|-a] [<pangalan ng video>|<link ng video>]: para mag-download ng audio mula sa youtube"
+				+ "\n   {pn} [info|-i] [<pangalan ng video>|<link ng video>]: para tingnan ang impormasyon ng video mula sa youtube"
+				+ "\n   Halimbawa:"
+				+ "\n    {pn} -v Fallen Kingdom"
+				+ "\n    {pn} -a Fallen Kingdom"
+				+ "\n    {pn} -i Fallen Kingdom"
 		}
 	},
 
 	langs: {
 		vi: {
-			error: "❌ Sanzu AI Error: %1",
-			noResult: "⭕ Không tìm thấy kết quả phù hợp cho: %1",
-			choose: "%1Reply tin nhắn này bằng số để chọn bài hát/video hoặc nhập bất kỳ để hủy:",
+			error: "❌ Đã xảy ra lỗi: %1",
+			noResult: "⭕ Không có kết quả tìm kiếm nào phù hợp với từ khóa %1",
+			choose: "%1Reply tin nhắn với số để chọn hoặc nội dung bất kì để gỡ",
 			video: "video",
 			audio: "âm thanh",
-			downloading: "⬇️ [Sanzu AI] Đang tải xuống %1 \"%2\"...",
-			downloading2: "⬇️ [Sanzu AI] Đang tải xuống %1 \"%2\"\n🔃 Tốc độ: %3MB/s\n⏸️ Đã tải: %4/%5MB (%6%)\n⏳ Ước tính thời gian còn lại: %7 giây",
+			downloading: "⬇️ Đang tải xuống %1 \"%2\"",
+			downloading2: "⬇️ Đang tải xuống %1 \"%2\"\n🔃 Tốc độ: %3MB/s\n⏸️ Đã tải: %4/%5MB (%6%)\n⏳ Ước tính thời gian còn lại: %7 giây",
 			noVideo: "⭕ Rất tiếc, không tìm thấy video nào có dung lượng nhỏ hơn 83MB",
 			noAudio: "⭕ Rất tiếc, không tìm thấy audio nào có dung lượng nhỏ hơn 26MB",
-			info: "💠 [Sanzu AI YouTube Info]\nTiêu đề: %1\n🏪 Channel: %2\n👨‍👩‍👧‍👦 Subscribers: %3\n⏱ Thời lượng: %4\n👀 Lượt xem: %5\n👍 Lượt thích: %6\n🆙 Ngày đăng: %7\n🔠 ID: %8\n🔗 Link: %9"
+			info: "💠 Tiêu đề: %1\n🏪 Channel: %2\n👨‍👩‍👧‍👦 Subscriber: %3\n⏱ Thời gian video: %4\n👀 Lượt xem: %5\n👍 Lượt thích: %6\n🆙 Ngày tải lên: %7\n🔠 ID: %8\n🔗 Link: %9",
+			listChapter: "\n📖 Danh sách phân đoạn: %1\n"
 		},
 		en: {
-			error: "❌ Sanzu AI Error: %1",
-			noResult: "⭕ No YouTube results found for: %1",
-			choose: "%1Reply to this message with a number to select, or any key to cancel:\n",
+			error: "❌ An error occurred: %1",
+			noResult: "⭕ No search results match the keyword %1",
+			choose: "%1Reply to the message with a number to choose or any content to cancel",
 			video: "video",
 			audio: "audio",
-			downloading: "⬇️ [Sanzu AI] Downloading %1 \"%2\"...",
-			downloading2: "⬇️ [Sanzu AI] Downloading %1 \"%2\"\n🔃 Speed: %3MB/s\n⏸️ Downloaded: %4/%5MB (%6%)\n⏳ Time remaining: %7s",
-			noVideo: "⭕ Sanzu AI: File size exceeds the 83MB video limit.",
-			noAudio: "⭕ Sanzu AI: File size exceeds the 26MB audio limit.",
-			info: "💠 [Sanzu AI YouTube Info]\nTitle: %1\n🏪 Channel: %2\n👨‍👩‍👧‍👦 Subscribers: %3\n⏱ Duration: %4\n👀 Views: %5\n👍 Likes: %6\n🆙 Upload Date: %7\n🔠 ID: %8\n🔗 Link: %9"
+			downloading: "⬇️ Downloading %1 \"%2\"",
+			downloading2: "⬇️ Downloading %1 \"%2\"\n🔃 Speed: %3MB/s\n⏸️ Downloaded: %4/%5MB (%6%)\n⏳ Estimated time remaining: %7 seconds",
+			noVideo: "⭕ Sorry, no video was found with a size less than 83MB",
+			noAudio: "⭕ Sorry, no audio was found with a size less than 26MB",
+			info: "💠 Title: %1\n🏪 Channel: %2\n👨‍👩‍👧‍👦 Subscriber: %3\n⏱ Video duration: %4\n👀 View count: %5\n👍 Like count: %6\n🆙 Upload date: %7\n🔠 ID: %8\n🔗 Link: %9",
+			listChapter: "\n📖 List chapter: %1\n"
+		},
+		tl: {
+			error: "❌ May naganap na error: %1",
+			noResult: "⭕ Walang resultang tumugma sa keyword na %1",
+			choose: "%1Mag-reply sa mensahe gamit ang numero para pumili o kahit anong content para kanselahin",
+			video: "video",
+			audio: "audio",
+			downloading: "⬇️ Dina-download ang %1 \"%2\"",
+			downloading2: "⬇️ Dina-download ang %1 \"%2\"\n🔃 Bilis: %3MB/s\n⏸️ Na-download: %4/%5MB (%6%)\n⏳ Tinatayang matitirang oras: %7 segundo",
+			noVideo: "⭕ Paumanhin, walang nahanap na video na mas maliit sa 83MB",
+			noAudio: "⭕ Paumanhin, walang nahanap na audio na mas maliit sa 26MB",
+			info: "💠 Pamagat: %1\n🏪 Channel: %2\n👨‍👩‍👧‍👦 Subscriber: %3\n⏱ Tagal ng video: %4\n👀 Views: %5\n👍 Likes: %6\n🆙 Petsa ng upload: %7\n🔠 ID: %8\n🔗 Link: %9",
+			listChapter: "\n📖 Listahan ng chapter: %1\n"
 		}
 	},
 
-	onStart: async function ({ args, message, event, commandName, getLang, api }) {
-		const { getStreamFromURL } = global.utils || {};
-
-		if (!args[0]) return message.SyntaxError?.() || message.reply("⚠️ Paki-specify ang option: -v (video), -a (audio), o -i (info).");
-
+	onStart: async function ({ args, message, event, commandName, getLang }) {
 		let type;
-		switch (args[0].toLowerCase()) {
+		switch (args[0]) {
 			case "-v":
 			case "video":
 				type = "video";
@@ -88,60 +118,50 @@ module.exports = {
 				type = "info";
 				break;
 			default:
-				return message.SyntaxError?.() || message.reply("⚠️ Invalid option!");
+				return message.SyntaxError();
 		}
 
 		const checkurl = /^(?:https?:\/\/)?(?:m\.|www\.)?(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))((\w|-){11})(?:\S+)?$/;
 		const urlYtb = checkurl.test(args[1]);
 
 		if (urlYtb) {
-			try {
-				const infoVideo = await getVideoInfo(args[1]);
-				await handle({ type, infoVideo, message, getLang });
-			} catch (err) {
-				return message.reply(getLang("error", err.message));
-			}
+			const infoVideo = await getVideoInfo(args[1]);
+			handle({ type, infoVideo, message, downloadFile, getLang });
 			return;
 		}
 
 		let keyWord = args.slice(1).join(" ");
-		if (!keyWord) return message.reply("⚠️ Paki-lagay ang pangalan ng video o link!");
-
 		keyWord = keyWord.includes("?feature=share") ? keyWord.replace("?feature=share", "") : keyWord;
 		const maxResults = 6;
 
 		let result;
 		try {
 			result = (await search(keyWord)).slice(0, maxResults);
-		} catch (err) {
+		}
+		catch (err) {
 			return message.reply(getLang("error", err.message));
 		}
-
-		if (!result || result.length === 0)
+		if (result.length == 0)
 			return message.reply(getLang("noResult", keyWord));
-
 		let msg = "";
 		let i = 1;
 		const thumbnails = [];
+		const arrayID = [];
 
 		for (const info of result) {
-			if (getStreamFromURL && info.thumbnail) {
-				thumbnails.push(getStreamFromURL(info.thumbnail));
-			}
-			msg += `${i++}. ${info.title}\n⏱️ Time: ${info.time}\n📺 Channel: ${info.channel.name}\n\n`;
+			thumbnails.push(getStreamFromURL(info.thumbnail));
+			msg += `${i++}. ${info.title}\nTime: ${info.time}\nChannel: ${info.channel.name}\n\n`;
 		}
-
-		const attachments = thumbnails.length > 0 ? await Promise.all(thumbnails) : [];
 
 		message.reply({
 			body: getLang("choose", msg),
-			attachment: attachments
+			attachment: await Promise.all(thumbnails)
 		}, (err, info) => {
-			if (err) return;
-			global.GoatBot?.onReply?.set(info.messageID, {
+			global.GoatBot.onReply.set(info.messageID, {
 				commandName,
 				messageID: info.messageID,
 				author: event.senderID,
+				arrayID,
 				result,
 				type
 			});
@@ -149,122 +169,138 @@ module.exports = {
 	},
 
 	onReply: async ({ event, api, Reply, message, getLang }) => {
-		const { result, type, author } = Reply;
-		if (event.senderID !== author) return;
-
-		const choice = parseInt(event.body, 10);
-		if (!isNaN(choice) && choice >= 1 && choice <= result.length) {
+		const { result, type } = Reply;
+		const choice = event.body;
+		if (!isNaN(choice) && choice <= 6) {
 			const infoChoice = result[choice - 1];
+			const idvideo = infoChoice.id;
+			const infoVideo = await getVideoInfo(idvideo);
 			api.unsendMessage(Reply.messageID);
-
-			try {
-				const infoVideo = await getVideoInfo(infoChoice.id);
-				await handle({ type, infoVideo, message, getLang });
-			} catch (err) {
-				message.reply(getLang("error", err.message));
-			}
-		} else {
-			api.unsendMessage(Reply.messageID);
+			await handle({ type, infoVideo, message, getLang });
 		}
+		else
+			api.unsendMessage(Reply.messageID);
 	}
 };
 
 async function handle({ type, infoVideo, message, getLang }) {
 	const { title, videoId } = infoVideo;
-	const tmpDir = path.join(__dirname, "tmp");
-	await fs.ensureDir(tmpDir);
 
-	if (type === "video") {
-		const MAX_SIZE = 83 * 1024 * 1024;
-		const msgSend = await message.reply(getLang("downloading", getLang("video"), title));
-		
-		try {
-			const { formats } = await ytdl.getInfo(videoId);
-			const getFormat = formats
-				.filter(f => f.hasVideo && f.hasAudio)
-				.sort((a, b) => (b.contentLength || 0) - (a.contentLength || 0))
-				.find(f => (f.contentLength || 0) < MAX_SIZE);
+	if (type == "video") {
+		const MAX_SIZE = 83 * 1024 * 1024; // 83MB (max size of video that can be sent on fb)
+		const msgSend = message.reply(getLang("downloading", getLang("video"), title));
+		const { formats } = await ytdl.getInfo(videoId);
+		const getFormat = formats
+			.filter(f => f.hasVideo && f.hasAudio && f.quality == 'tiny' && f.audioBitrate == 128)
+			.sort((a, b) => b.contentLength - a.contentLength)
+			.find(f => f.contentLength || 0 < MAX_SIZE);
+		if (!getFormat)
+			return message.reply(getLang("noVideo"));
+		const getStream = await getStreamAndSize(getFormat.url, `${videoId}.mp4`);
+		if (getStream.size > MAX_SIZE)
+			return message.reply(getLang("noVideo"));
 
-			if (!getFormat) return message.reply(getLang("noVideo"));
+		const savePath = __dirname + `/tmp/${videoId}_${Date.now()}.mp4`;
+		const writeStrean = fs.createWriteStream(savePath);
+		const startTime = Date.now();
+		getStream.stream.pipe(writeStrean);
+		const contentLength = getStream.size;
+		let downloaded = 0;
+		let count = 0;
 
-			const getStream = await getStreamAndSize(getFormat.url, `${videoId}.mp4`);
-			if (getStream.size > MAX_SIZE) return message.reply(getLang("noVideo"));
-
-			const savePath = path.join(tmpDir, `${videoId}_${Date.now()}.mp4`);
-			const writeStream = fs.createWriteStream(savePath);
-
-			getStream.stream.pipe(writeStream);
-
-			writeStream.on("finish", () => {
-				message.reply({
-					body: `🎬 Sanzu AI - Video Download:\n${title}`,
-					attachment: fs.createReadStream(savePath)
-				}, async (err) => {
-					if (err) message.reply(getLang("error", err.message));
-					await fs.remove(savePath);
-					if (msgSend?.messageID) message.unsend(msgSend.messageID);
-				});
+		getStream.stream.on("data", (chunk) => {
+			downloaded += chunk.length;
+			count++;
+			if (count == 5) {
+				const endTime = Date.now();
+				const speed = downloaded / (endTime - startTime) * 1000;
+				const timeLeft = (contentLength / downloaded * (endTime - startTime)) / 1000;
+				const percent = downloaded / contentLength * 100;
+				if (timeLeft > 30) // if time left > 30s, send message
+					message.reply(getLang("downloading2", getLang("video"), title, Math.floor(speed / 1000) / 1000, Math.floor(downloaded / 1000) / 1000, Math.floor(contentLength / 1000) / 1000, Math.floor(percent), timeLeft.toFixed(2)));
+			}
+		});
+		writeStrean.on("finish", () => {
+			message.reply({
+				body: title,
+				attachment: fs.createReadStream(savePath)
+			}, async (err) => {
+				if (err)
+					return message.reply(getLang("error", err.message));
+				fs.unlinkSync(savePath);
+				message.unsend((await msgSend).messageID);
 			});
-		} catch (err) {
-			return message.reply(getLang("error", err.message));
-		}
-	} else if (type === "audio") {
-		const MAX_SIZE = 26 * 1024 * 1024;
-		const msgSend = await message.reply(getLang("downloading", getLang("audio"), title));
+		});
+	}
+	else if (type == "audio") {
+		const MAX_SIZE = 27262976; // 26MB (max size of audio that can be sent on fb)
+		const msgSend = message.reply(getLang("downloading", getLang("audio"), title));
+		const { formats } = await ytdl.getInfo(videoId);
+		const getFormat = formats
+			.filter(f => f.hasAudio && !f.hasVideo)
+			.sort((a, b) => b.contentLength - a.contentLength)
+			.find(f => f.contentLength || 0 < MAX_SIZE);
+		if (!getFormat)
+			return message.reply(getLang("noAudio"));
+		const getStream = await getStreamAndSize(getFormat.url, `${videoId}.mp3`);
+		if (getStream.size > MAX_SIZE)
+			return message.reply(getLang("noAudio"));
 
-		try {
-			const { formats } = await ytdl.getInfo(videoId);
-			const getFormat = formats
-				.filter(f => f.hasAudio && !f.hasVideo)
-				.sort((a, b) => (b.contentLength || 0) - (a.contentLength || 0))
-				.find(f => (f.contentLength || 0) < MAX_SIZE);
+		const savePath = __dirname + `/tmp/${videoId}_${Date.now()}.mp3`;
+		const writeStrean = fs.createWriteStream(savePath);
+		const startTime = Date.now();
+		getStream.stream.pipe(writeStrean);
+		const contentLength = getStream.size;
+		let downloaded = 0;
+		let count = 0;
 
-			if (!getFormat) return message.reply(getLang("noAudio"));
+		getStream.stream.on("data", (chunk) => {
+			downloaded += chunk.length;
+			count++;
+			if (count == 5) {
+				const endTime = Date.now();
+				const speed = downloaded / (endTime - startTime) * 1000;
+				const timeLeft = (contentLength / downloaded * (endTime - startTime)) / 1000;
+				const percent = downloaded / contentLength * 100;
+				if (timeLeft > 30) // if time left > 30s, send message
+					message.reply(getLang("downloading2", getLang("audio"), title, Math.floor(speed / 1000) / 1000, Math.floor(downloaded / 1000) / 1000, Math.floor(contentLength / 1000) / 1000, Math.floor(percent), timeLeft.toFixed(2)));
+			}
+		});
 
-			const getStream = await getStreamAndSize(getFormat.url, `${videoId}.mp3`);
-			if (getStream.size > MAX_SIZE) return message.reply(getLang("noAudio"));
-
-			const savePath = path.join(tmpDir, `${videoId}_${Date.now()}.mp3`);
-			const writeStream = fs.createWriteStream(savePath);
-
-			getStream.stream.pipe(writeStream);
-
-			writeStream.on("finish", () => {
-				message.reply({
-					body: `🎵 Sanzu AI - Audio Download:\n${title}`,
-					attachment: fs.createReadStream(savePath)
-				}, async (err) => {
-					if (err) message.reply(getLang("error", err.message));
-					await fs.remove(savePath);
-					if (msgSend?.messageID) message.unsend(msgSend.messageID);
-				});
+		writeStrean.on("finish", () => {
+			message.reply({
+				body: title,
+				attachment: fs.createReadStream(savePath)
+			}, async (err) => {
+				if (err)
+					return message.reply(getLang("error", err.message));
+				fs.unlinkSync(savePath);
+				message.unsend((await msgSend).messageID);
 			});
-		} catch (err) {
-			return message.reply(getLang("error", err.message));
-		}
-	} else if (type === "info") {
-		const { title, lengthSeconds, viewCount, videoId, uploadDate, likes, channel } = infoVideo;
-		const formatNumber = global.utils?.formatNumber || ((n) => n.toLocaleString());
-		const getStreamFromURL = global.utils?.getStreamFromURL;
+		});
+	}
+	else if (type == "info") {
+		const { title, lengthSeconds, viewCount, videoId, uploadDate, likes, channel, chapters } = infoVideo;
 
 		const hours = Math.floor(lengthSeconds / 3600);
-		const minutes = Math.floor((lengthSeconds % 3600) / 60);
-		const seconds = Math.floor(lengthSeconds % 60);
+		const minutes = Math.floor(lengthSeconds % 3600 / 60);
+		const seconds = Math.floor(lengthSeconds % 3600 % 60);
 		const time = `${hours ? hours + ":" : ""}${minutes < 10 ? "0" + minutes : minutes}:${seconds < 10 ? "0" + seconds : seconds}`;
-
 		let msg = getLang("info", title, channel.name, formatNumber(channel.subscriberCount || 0), time, formatNumber(viewCount), formatNumber(likes), uploadDate, videoId, `https://youtu.be/${videoId}`);
-
-		let attachments = [];
-		if (getStreamFromURL) {
-			attachments = await Promise.all([
-				getStreamFromURL(infoVideo.thumbnails[infoVideo.thumbnails.length - 1].url),
-				getStreamFromURL(infoVideo.channel.thumbnails[infoVideo.channel.thumbnails.length - 1].url)
-			]).catch(() => []);
-		}
+		// if (chapters.length > 0) {
+		// 	msg += getLang("listChapter")
+		// 		+ chapters.reduce((acc, cur) => {
+		// 			const time = convertTime(cur.start_time * 1000, ':', ':', ':').slice(0, -1);
+		// 			return acc + ` ${time} => ${cur.title}\n`;
+		// 		}, '');
+		// }
 
 		message.reply({
 			body: msg,
-			attachment: attachments
+			attachment: await Promise.all([
+				getStreamFromURL(infoVideo.thumbnails[infoVideo.thumbnails.length - 1].url),
+				getStreamFromURL(infoVideo.channel.thumbnails[infoVideo.channel.thumbnails.length - 1].url)
+			])
 		});
 	}
 }
@@ -272,17 +308,12 @@ async function handle({ type, infoVideo, message, getLang }) {
 async function search(keyWord) {
 	try {
 		const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyWord)}`;
-		const res = await axios.get(url, {
-			headers: {
-				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
-			}
-		});
+		const res = await axios.get(url);
 		const getJson = JSON.parse(res.data.split("ytInitialData = ")[1].split(";</script>")[0]);
 		const videos = getJson.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents;
 		const results = [];
-
-		for (const video of videos) {
-			if (video.videoRenderer?.lengthText?.simpleText) {
+		for (const video of videos)
+			if (video.videoRenderer?.lengthText?.simpleText) // check is video, not playlist or channel or live
 				results.push({
 					id: video.videoRenderer.videoId,
 					title: video.videoRenderer.title.runs[0].text,
@@ -291,60 +322,85 @@ async function search(keyWord) {
 					channel: {
 						id: video.videoRenderer.ownerText.runs[0].navigationEndpoint.browseEndpoint.browseId,
 						name: video.videoRenderer.ownerText.runs[0].text,
-						thumbnail: video.videoRenderer.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.pop()?.url?.replace(/s[0-9]+\-c/g, '-c') || ''
+						thumbnail: video.videoRenderer.channelThumbnailSupportedRenderers.channelThumbnailWithLinkRenderer.thumbnail.thumbnails.pop().url.replace(/s[0-9]+\-c/g, '-c')
 					}
 				});
-			}
-		}
 		return results;
-	} catch (e) {
-		throw new Error("Sanzu AI Search Error: Hindi ma-search ang video.");
+	}
+	catch (e) {
+		const error = new Error("Cannot search video");
+		error.code = "SEARCH_VIDEO_ERROR";
+		throw error;
 	}
 }
 
 async function getVideoInfo(id) {
+	// get id from url if url
 	id = id.replace(/(>|<)/gi, '').split(/(vi\/|v=|\/v\/|youtu\.be\/|\/embed\/|\/shorts\/)/);
 	id = id[2] !== undefined ? id[2].split(/[^0-9a-z_\-]/i)[0] : id[0];
 
 	const { data: html } = await axios.get(`https://youtu.be/${id}?hl=en`, {
 		headers: {
-			'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
+			'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.101 Safari/537.36'
 		}
 	});
-
 	const json = JSON.parse(html.match(/var ytInitialPlayerResponse = (.*?});/)[1]);
 	const json2 = JSON.parse(html.match(/var ytInitialData = (.*?});/)[1]);
 	const { title, lengthSeconds, viewCount, videoId, thumbnail, author } = json.videoDetails;
+	let getChapters;
+	try {
+		getChapters = json2.playerOverlays.playerOverlayRenderer.decoratedPlayerBarRenderer.decoratedPlayerBarRenderer.playerBar.multiMarkersPlayerBarRenderer.markersMap.find(x => x.key == "DESCRIPTION_CHAPTERS" && x.value.chapters).value.chapters;
+	}
+	catch (e) {
+		getChapters = [];
+	}
+	const owner = json2.contents.twoColumnWatchNextResults.results.results.contents.find(x => x.videoSecondaryInfoRenderer).videoSecondaryInfoRenderer.owner;
 
-	const owner = json2.contents.twoColumnWatchNextResults.results.results.contents.find(x => x.videoSecondaryInfoRenderer)?.videoSecondaryInfoRenderer?.owner;
-
-	return {
+	const result = {
 		videoId,
 		title,
 		video_url: `https://youtu.be/${videoId}`,
-		lengthSeconds: parseInt(lengthSeconds.match(/\d+/)[0], 10),
-		viewCount: parseInt(viewCount.match(/\d+/)[0], 10),
-		uploadDate: json.microformat?.playerMicroformatRenderer?.uploadDate || "N/A",
-		likes: json2.contents.twoColumnWatchNextResults.results.results.contents.find(x => x.videoPrimaryInfoRenderer)?.videoPrimaryInfoRenderer?.videoActions?.menuRenderer?.topLevelButtons?.find(x => x.segmentedLikeDislikeButtonViewModel)?.segmentedLikeDislikeButtonViewModel?.likeButtonViewModel?.likeButtonViewModel?.toggleButtonViewModel?.toggleButtonViewModel?.defaultButtonViewModel?.buttonViewModel?.accessibilityText?.replace(/\.|,/g, '')?.match(/\d+/)?.[0] || 0,
+		lengthSeconds: lengthSeconds.match(/\d+/)[0],
+		viewCount: viewCount.match(/\d+/)[0],
+		uploadDate: json.microformat.playerMicroformatRenderer.uploadDate,
+		// contents.twoColumnWatchNextResults.results.results.contents[0].videoPrimaryInfoRenderer.videoActions.menuRenderer.topLevelButtons[0].segmentedLikeDislikeButtonViewModel.likeButtonViewModel.likeButtonViewModel.toggleButtonViewModel.toggleButtonViewModel.defaultButtonViewModel.buttonViewModel.accessibilityText
+		likes: json2.contents.twoColumnWatchNextResults.results.results.contents.find(x => x.videoPrimaryInfoRenderer).videoPrimaryInfoRenderer.videoActions.menuRenderer.topLevelButtons.find(x => x.segmentedLikeDislikeButtonViewModel).segmentedLikeDislikeButtonViewModel.likeButtonViewModel.likeButtonViewModel.toggleButtonViewModel.toggleButtonViewModel.defaultButtonViewModel.buttonViewModel.accessibilityText.replace(/\.|,/g, '').match(/\d+/)?.[0] || 0,
+		chapters: getChapters.map((x, i) => {
+			const start_time = x.chapterRenderer.timeRangeStartMillis;
+			const end_time = getChapters[i + 1]?.chapterRenderer?.timeRangeStartMillis || lengthSeconds.match(/\d+/)[0] * 1000;
+
+			return {
+				title: x.chapterRenderer.title.simpleText,
+				start_time_ms: start_time,
+				start_time: start_time / 1000,
+				end_time_ms: end_time - start_time + start_time,
+				end_time: (end_time - start_time + start_time) / 1000
+			};
+		}),
 		thumbnails: thumbnail.thumbnails,
 		author: author,
 		channel: {
-			id: owner?.videoOwnerRenderer?.navigationEndpoint?.browseEndpoint?.browseId || "",
-			username: owner?.videoOwnerRenderer?.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl || "",
-			name: owner?.videoOwnerRenderer?.title?.runs[0]?.text || author,
-			thumbnails: owner?.videoOwnerRenderer?.thumbnail?.thumbnails || [],
-			subscriberCount: parseAbbreviatedNumber(owner?.videoOwnerRenderer?.subscriberCountText?.simpleText || "0")
+			id: owner.videoOwnerRenderer.navigationEndpoint.browseEndpoint.browseId,
+			username: owner.videoOwnerRenderer.navigationEndpoint.browseEndpoint.canonicalBaseUrl,
+			name: owner.videoOwnerRenderer.title.runs[0].text,
+			thumbnails: owner.videoOwnerRenderer.thumbnail.thumbnails,
+			subscriberCount: parseAbbreviatedNumber(owner.videoOwnerRenderer.subscriberCountText.simpleText)
 		}
 	};
+
+	return result;
 }
 
 function parseAbbreviatedNumber(string) {
-	if (!string) return 0;
-	const match = string.replace(',', '.').replace(' ', '').match(/([\d,.]+)([MK]?)/);
+	const match = string
+		.replace(',', '.')
+		.replace(' ', '')
+		.match(/([\d,.]+)([MK]?)/);
 	if (match) {
 		let [, num, multi] = match;
 		num = parseFloat(num);
-		return Math.round(multi === 'M' ? num * 1000000 : multi === 'K' ? num * 1000 : num);
+		return Math.round(multi === 'M' ? num * 1000000 :
+			multi === 'K' ? num * 1000 : num);
 	}
-	return 0;
+	return null;
 }
