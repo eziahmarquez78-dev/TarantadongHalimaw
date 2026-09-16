@@ -1,126 +1,196 @@
-const OWNER_NAME = "Sinzu";
-const OWNER_FB = "https://www.facebook.com/profile.php?id=61594251452411";
+const fs = require("fs");
+const path = require("path");
 
-module.exports = {
-	config: {
-		name: "help",
-		aliases: ["h", "commands", "cmds"],
-		version: "1.0",
-		author: "NTKhang",
-		countDown: 5,
-		role: 0,
-		description: {
-			vi: "Xem danh sách lệnh hoặc cách sử dụng chi tiết của 1 lệnh",
-			en: "View list of commands or detailed usage of a command",
-			tl: "Tingnan ang listahan ng mga command o ang detalyadong paggamit ng isang command"
-		},
-		category: "info",
-		guide: {
-			vi: "   {pn}: xem danh sách tất cả lệnh"
-				+ "\n   {pn} <tên lệnh>: xem cách sử dụng chi tiết của 1 lệnh",
-			en: "   {pn}: view list of all commands"
-				+ "\n   {pn} <command name>: view detailed usage of a command",
-			tl: "   {pn}: tingnan ang listahan ng lahat ng command"
-				+ "\n   {pn} <pangalan ng command>: tingnan ang detalyadong paggamit ng isang command"
-		}
-	},
+module.exports.config = {
+  name: "help",
+  version: "2.0.0",
+  hasPermission: 0,
+  credits: "Sinzu",
+  description: "Automatic command list — detects old and new commands.",
+  commandCategory: "general",
+  usages: "[command name]",
+  cooldowns: 5
+};
 
-	langs: {
-		vi: {
-			listCommand: "📚 | Danh sách lệnh (%1 lệnh):\n\n%2\n\n👉 Gõ \"%3help <tên lệnh>\" để xem cách dùng chi tiết của 1 lệnh",
-			commandNotFound: "⚠️ | Không tìm thấy lệnh \"%1\"",
-			detail: "📖 | Chi tiết lệnh \"%1\"\n\n📌 Mô tả: %2\n🔑 Alias: %3\n🎯 Role: %4\n📂 Danh mục: %5\n\n📝 Cách dùng:\n%6",
-			ownerFooter: "\n\n👑 Owner: %1\n📘 Facebook: %2",
-			noAlias: "Không có",
-			noDescription: "Không có mô tả",
-			roleText: {
-				0: "Tất cả thành viên",
-				1: "Chỉ quản trị viên nhóm",
-				2: "Chỉ admin bot"
-			}
-		},
-		en: {
-			listCommand: "📚 | Command list (%1 commands):\n\n%2\n\n👉 Type \"%3help <command name>\" to view detailed usage of a command",
-			commandNotFound: "⚠️ | Command \"%1\" not found",
-			detail: "📖 | Detail of command \"%1\"\n\n📌 Description: %2\n🔑 Alias: %3\n🎯 Role: %4\n📂 Category: %5\n\n📝 Usage:\n%6",
-			ownerFooter: "\n\n👑 Owner: %1\n📘 Facebook: %2",
-			noAlias: "None",
-			noDescription: "No description",
-			roleText: {
-				0: "All members",
-				1: "Group admin only",
-				2: "Bot admin only"
-			}
-		},
-		tl: {
-			listCommand: "📚 | Listahan ng command (%1 na command):\n\n%2\n\n👉 I-type ang \"%3help <pangalan ng command>\" para tingnan ang detalyadong paggamit ng isang command",
-			commandNotFound: "⚠️ | Hindi nahanap ang command na \"%1\"",
-			detail: "📖 | Detalye ng command na \"%1\"\n\n📌 Deskripsyon: %2\n🔑 Alias: %3\n🎯 Role: %4\n📂 Kategorya: %5\n\n📝 Paano gamitin:\n%6",
-			ownerFooter: "\n\n👑 May-ari (Owner): %1\n📘 Facebook: %2",
-			noAlias: "Wala",
-			noDescription: "Walang deskripsyon",
-			roleText: {
-				0: "Lahat ng miyembro",
-				1: "Admin ng group lang",
-				2: "Admin ng bot lang"
-			}
-		}
-	},
+module.exports.run = async function ({ api, event, args }) {
 
-	onStart: async function ({ args, message, getLang, threadsData, event, prefix }) {
-		const { commands } = global.GoatBot;
-		const lang = global.GoatBot.config.language || "en";
+  // ==========================================
+  // AUTO DETECT COMMANDS
+  // ==========================================
 
-		// gets custom set role of a command in this group, if any
-		const setRole = await threadsData.get(event.threadID, "data.setRole", {});
+  const commandFolder = path.join(__dirname);
 
-		if (!args[0]) {
-			// group commands by category
-			const grouped = {};
-			for (const [name, command] of commands) {
-				const cate = (command.config.category || "no category").toLowerCase();
-				if (!grouped[cate])
-					grouped[cate] = [];
-				if (!grouped[cate].includes(name))
-					grouped[cate].push(name);
-			}
+  let commandList = [];
 
-			let msg = "";
-			let total = 0;
-			for (const cate in grouped) {
-				const list = grouped[cate].sort();
-				total += list.length;
-				msg += `╭─── ${cate.toUpperCase()} ───\n│ ${list.join(", ")}\n╰──────────────\n\n`;
-			}
+  try {
+    const files = fs.readdirSync(commandFolder);
 
-			return message.reply(
-				getLang("listCommand", total, msg.trim(), prefix)
-				+ getLang("ownerFooter", OWNER_NAME, OWNER_FB)
-			);
-		}
+    for (const file of files) {
+      // JS files lang
+      if (!file.endsWith(".js")) continue;
 
-		const commandName = args[0].toLowerCase();
-		const command = commands.get(commandName) || commands.get(global.GoatBot.aliases.get(commandName));
+      // Huwag isama ang sarili
+      if (file === "help.js") continue;
 
-		if (!command)
-			return message.reply(getLang("commandNotFound", commandName));
+      try {
+        const commandPath = path.join(commandFolder, file);
+        const command = require(commandPath);
 
-		const { config } = command;
-		const name = config.name;
-		const description = (typeof config.description == "object" ? config.description[lang] || config.description.en : config.description) || getLang("noDescription");
-		const aliases = config.aliases?.length ? config.aliases.join(", ") : getLang("noAlias");
-		const role = setRole[name] ?? config.role ?? 0;
-		const roleText = getLang("roleText")[role] || role;
-		const category = config.category || "-";
+        // Kukunin ang command name sa config
+        if (
+          command &&
+          command.config &&
+          command.config.name
+        ) {
+          commandList.push({
+            name: command.config.name.toLowerCase(),
+            description: command.config.description || "No description",
+            category: command.config.commandCategory || "general",
+            permission: command.config.hasPermission ?? 0
+          });
+        }
 
-		let guide = config.guide;
-		if (typeof guide == "object")
-			guide = guide[lang]?.body || guide[lang] || guide.en?.body || guide.en || "";
-		guide = (guide || "").replace(/\{pn\}/g, prefix + name).replace(/\{p\}/g, prefix).replace(/\{n\}/g, name);
+      } catch (err) {
+        // Skip lang kapag may sirang command
+        console.log(`[HELP] Failed to load: ${file}`);
+      }
+    }
 
-		return message.reply(
-			getLang("detail", name, description, aliases, roleText, category, guide)
-			+ getLang("ownerFooter", OWNER_NAME, OWNER_FB)
-		);
-	}
+  } catch (err) {
+    console.error("[HELP] Failed to read command folder:", err);
+
+    return api.sendMessage(
+      "❌ Hindi ma-load ang command folder.",
+      event.threadID,
+      event.messageID
+    );
+  }
+
+  // ==========================================
+  // REMOVE DUPLICATES + SORT
+  // ==========================================
+
+  const unique = new Map();
+
+  for (const cmd of commandList) {
+    if (!unique.has(cmd.name)) {
+      unique.set(cmd.name, cmd);
+    }
+  }
+
+  commandList = Array.from(unique.values());
+
+  commandList.sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+
+  // ==========================================
+  // PREFIX
+  // ==========================================
+
+  const prefix =
+    global.config?.PREFIX ||
+    global.config?.prefix ||
+    "/";
+
+  // ==========================================
+  // SPECIFIC COMMAND
+  // ==========================================
+
+  if (args[0]) {
+
+    const cmdName = args[0].toLowerCase();
+
+    const command = commandList.find(
+      cmd => cmd.name === cmdName
+    );
+
+    if (!command) {
+      return api.sendMessage(
+        `❌ Walang command na "${cmdName}".\n\n` +
+        `Type "${prefix}help" para makita lahat ng commands.`,
+        event.threadID,
+        event.messageID
+      );
+    }
+
+    let permissionText = "Everyone";
+
+    if (command.permission === 1) {
+      permissionText = "Group Admin";
+    } else if (command.permission >= 2) {
+      permissionText = "Bot Admin";
+    }
+
+    return api.sendMessage(
+      `╭─────────────────╮\n` +
+      `   📌 COMMAND INFO\n` +
+      `╰─────────────────╯\n\n` +
+
+      `Name: ${command.name}\n` +
+      `Usage: ${prefix}${command.name}\n` +
+      `Category: ${command.category}\n` +
+      `Permission: ${permissionText}\n` +
+      `Description: ${command.description}\n\n` +
+
+      `━━━━━━━━━━━━━━━━\n` +
+      `Type "${prefix}help" para sa lahat ng commands.`,
+      event.threadID,
+      event.messageID
+    );
+  }
+
+  // ==========================================
+  // GROUP COMMANDS BY CATEGORY
+  // ==========================================
+
+  const categories = {};
+
+  for (const cmd of commandList) {
+
+    const category =
+      cmd.category.toLowerCase();
+
+    if (!categories[category]) {
+      categories[category] = [];
+    }
+
+    categories[category].push(cmd);
+  }
+
+  // ==========================================
+  // BUILD HELP MENU
+  // ==========================================
+
+  let msg =
+    `╭────────────────────────╮\n` +
+    `     📖 SINZU BOT — HELP\n` +
+    `╰────────────────────────╯\n\n`;
+
+  msg += `👑 Owner: Sinzu\n`;
+  msg += `📦 Total Commands: ${commandList.length}\n\n`;
+
+  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+
+  for (const category of Object.keys(categories).sort()) {
+
+    msg += `\n【 ${category.toUpperCase()} 】\n`;
+
+    for (const cmd of categories[category]) {
+      msg += `${prefix}${cmd.name}\n`;
+    }
+  }
+
+  msg +=
+    `\n━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `💡 Use:\n` +
+    `${prefix}help [command]\n\n` +
+    `Example:\n` +
+    `${prefix}help ai`;
+
+  return api.sendMessage(
+    msg,
+    event.threadID,
+    event.messageID
+  );
 };
