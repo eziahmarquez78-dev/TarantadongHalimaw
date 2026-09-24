@@ -6,10 +6,10 @@ const ALLOWED_ID = "61594795855409";
 
 module.exports.config = {
   name: "halimaw",
-  version: "3.8.0",
+  version: "4.0.0",
   hasPermission: 0,
   credits: "sinzu / updated",
-  description: "Tarantadong Halimaw - No Prefix Auto-Responder (Kahit Sino Kakanain)",
+  description: "Tarantadong Halimaw - Auto-Reply + Idle Auto-Count 1-50 with Resibo",
   usePrefix: false,
   commandCategory: "Fun",
   usages: "halimaw [on | off | status]",
@@ -18,8 +18,8 @@ module.exports.config = {
 
 const DATA_PATH = path.join(__dirname, "halimaw_config.json");
 
-// Dynamic Cooldown Tracker para sa stealth execution
-const threadCooldowns = new Map();
+// Idle Timers para sa bawat Thread/GC
+const idleTimers = new Map();
 
 // Listahan ng 100 "Seno" style replies
 const ROASTS = [
@@ -145,56 +145,66 @@ function saveConfig(data) {
   }
 }
 
-// ===== EVENT HANDLER (PM + GC AUTO-RESPONDER) =====
+// Helper: Function para mag-start ng 1-50 Count na may Resibo kapag walang nag-cha-chat
+function startIdleCounting(api, threadID) {
+  // Burahin ang lumang timer kung mayroon man
+  if (idleTimers.has(threadID)) {
+    clearTimeout(idleTimers.get(threadID));
+  }
+
+  // Mag-set ng timer: kapag walang nag-chat sa loob ng 10 seconds, magsisimula ang spam count 1-50
+  const timer = setTimeout(async () => {
+    const config = loadConfig();
+    if (!config.active) return;
+
+    // 1. Magpapadala muna ng isang Seno reply
+    const randomSeno = ROASTS[Math.floor(Math.random() * ROASTS.length)];
+    api.sendMessage(`[IDLE TRIGGER] Walang nag-cha-chat kaya:\n\n${randomSeno}`, threadID);
+
+    // 2. Magbibilang ng 1 hanggang 50 na may resibo
+    for (let i = 1; i <= 50; i++) {
+      // Re-check kung naka-active pa rin
+      if (!loadConfig().active) break;
+
+      const timeStamp = new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" });
+      const resiboText = `🧾 [RESIBO COUNT: ${i}/50]\n───────────────────\n🔢 Bilang: ${i}\n⏰ Time: ${timeStamp}\n🥷 Status: Active Seno Spam Count\n───────────────────`;
+
+      api.sendMessage(resiboText, threadID);
+
+      // Delay na 1.5 seconds bawat bilang para hindi ma-ban agad ng Facebook
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }, 10000); // 10 seconds idle time
+
+  idleTimers.set(threadID, timer);
+}
+
+// ===== EVENT HANDLER (EVERY CHAT AUTO-RESPONDER) =====
 module.exports.handleEvent = async function ({ api, event }) {
   const { threadID, senderID, body } = event;
 
-  // Huwag pansinin kapag walang body, kapag command sa sarili, o kapag sariling chat ng bot
+  // Huwag pansinin kapag walang body o kapag sariling chat ng bot
   if (!body || senderID === api.getCurrentUserID()) return;
 
-  // Huwag sagutin kapag mismo yung control command "halimaw" ang tinatatype
+  // Huwag pansinin kapag ang mismong command na "halimaw" ang tina-type
   if (body.toLowerCase().startsWith("halimaw")) return;
 
   const config = loadConfig();
   if (!config.active) return;
 
-  // Dynamic Cooldown Check (8s to 12s randomness)
-  const now = Date.now();
-  const lastTime = threadCooldowns.get(threadID) || 0;
-  const dynamicCooldown = Math.floor(Math.random() * 4000) + 8000;
-
-  if (now - lastTime < dynamicCooldown) return;
-
-  // 85% Chance na sumagot sa Kahit Sino
-  if (Math.random() > 0.85) return;
-
-  threadCooldowns.set(threadID, now);
-
+  // 1. BAWAT MAG-CHAT: Rereplayan agad ng bot ng random Seno
   const selectedRoast = ROASTS[Math.floor(Math.random() * ROASTS.length)];
-  const typingDelay = Math.floor(Math.random() * 1500) + 1500;
+  api.sendMessage(selectedRoast, threadID);
 
-  try {
-    if (typeof api.sendTypingIndicator === "function") {
-      api.sendTypingIndicator(threadID, true);
-    }
-  } catch (err) {}
-
-  setTimeout(() => {
-    try {
-      if (typeof api.sendTypingIndicator === "function") {
-        api.sendTypingIndicator(threadID, false);
-      }
-    } catch (err) {}
-
-    api.sendMessage(selectedRoast, threadID);
-  }, typingDelay);
+  // 2. I-reset ang Idle Timer dahil may nag-chat na
+  startIdleCounting(api, threadID);
 };
 
 // ===== COMMAND CONTROLLER =====
 module.exports.run = async function ({ api, event, args }) {
   const { threadID, messageID, senderID } = event;
 
-  // ID Restriction Validation para sa Control Commands
+  // ID Restriction Validation
   if (String(senderID) !== ALLOWED_ID) {
     return api.sendMessage(
       "❌ Wala kang permiso para gamitin ang command na ito.",
@@ -209,12 +219,16 @@ module.exports.run = async function ({ api, event, args }) {
   if (sub === "on") {
     config.active = true;
     saveConfig(config);
+
+    // Simulan din ang Idle Timer
+    startIdleCounting(api, threadID);
+
     return api.sendMessage(
-      "🥷🩸 TARANTADONG HALIMAW (NO PREFIX MODE): ACTIVATED\n" +
+      "🥷🩸 TARANTADONG HALIMAW (AUTO-REPLY + TIKAS COUNT 1-50): ACTIVATED\n" +
       "───────────────────\n" +
-      "🩸 Mode: Ninja Stealth Auto-Roast\n" +
-      "🥷 Scope: Kahit Sino sa GC at PM\n" +
-      "🩸 Target: Random 100 Seno Troll Replies\n" +
+      "🩸 Mode: Instant Reply sa Lahat ng Mag-chat\n" +
+      "🥷 Idle Mode: 1 Seno + 1-50 Count with Resibo (pag walang nagchachat)\n" +
+      "🩸 Prefix: No Prefix\n" +
       "───────────────────\n" +
       "🩸 Gamitin ang `halimaw off` para i-turn off.",
       threadID,
@@ -225,10 +239,17 @@ module.exports.run = async function ({ api, event, args }) {
   if (sub === "off") {
     config.active = false;
     saveConfig(config);
+
+    // I-clear ang timer kapag in-off
+    if (idleTimers.has(threadID)) {
+      clearTimeout(idleTimers.get(threadID));
+      idleTimers.delete(threadID);
+    }
+
     return api.sendMessage(
       "🥷🩸 TARANTADONG HALIMAW: DISABLED\n" +
       "───────────────────\n" +
-      "Napatay na ang auto-responder.",
+      "Napatay na ang auto-responder at idle counter.",
       threadID,
       messageID
     );
@@ -242,8 +263,8 @@ module.exports.run = async function ({ api, event, args }) {
       "📊 TARANTADONG HALIMAW STATUS\n" +
       "───────────────────\n" +
       `• Status: ${statusSymbol}\n` +
-      `• Target: Kahit sino sa chat\n` +
-      `• Prefix: Wala (No Prefix)\n` +
+      `• Target: Lahat ng mag-chat\n` +
+      `• Idle Feature: Auto-count 1-50 with Resibo\n` +
       "───────────────────",
       threadID,
       messageID
@@ -253,8 +274,8 @@ module.exports.run = async function ({ api, event, args }) {
   return api.sendMessage(
     "🥷🩸 TARANTADONG HALIMAW PANEL\n" +
     "───────────────────\n" +
-    "▶️ halimaw on  — Simulan ang auto-roast sa lahat\n" +
-    "⏸️ halimaw off — I-off ang auto-roast\n" +
+    "▶️ halimaw on  — Simulan ang auto-reply at idle count\n" +
+    "⏸️ halimaw off — I-off ang bot\n" +
     "📈 halimaw status — I-check ang status\n" +
     "───────────────────",
     threadID,
