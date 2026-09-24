@@ -1,24 +1,24 @@
 const fs = require("fs");
 const path = require("path");
 
-// Allowed User ID
+// Allowed User ID para sa pag-control ng commands (halimaw on/off)
 const ALLOWED_ID = "61594795855409";
 
 module.exports.config = {
   name: "halimaw",
-  version: "3.6.0",
+  version: "3.8.0",
   hasPermission: 0,
   credits: "sinzu / updated",
-  description: "Tarantadong Halimaw - 100 Seno Replies Auto-Responder (Restricted Access)",
-  usePrefix: true,
+  description: "Tarantadong Halimaw - No Prefix Auto-Responder (Kahit Sino Kakanain)",
+  usePrefix: false,
   commandCategory: "Fun",
-  usages: "/halimaw [on | off | status]",
+  usages: "halimaw [on | off | status]",
   cooldowns: 3
 };
 
 const DATA_PATH = path.join(__dirname, "halimaw_config.json");
 
-// Dynamic Cooldown Tracker
+// Dynamic Cooldown Tracker para sa stealth execution
 const threadCooldowns = new Map();
 
 // Listahan ng 100 "Seno" style replies
@@ -149,26 +149,29 @@ function saveConfig(data) {
 module.exports.handleEvent = async function ({ api, event }) {
   const { threadID, senderID, body } = event;
 
-  // Huwag pansinin kapag walang body, kapag command, o kapag sariling chat ng bot
-  if (!body || body.startsWith("/") || senderID === api.getCurrentUserID()) return;
+  // Huwag pansinin kapag walang body, kapag command sa sarili, o kapag sariling chat ng bot
+  if (!body || senderID === api.getCurrentUserID()) return;
+
+  // Huwag sagutin kapag mismo yung control command "halimaw" ang tinatatype
+  if (body.toLowerCase().startsWith("halimaw")) return;
 
   const config = loadConfig();
   if (!config.active) return;
 
-  // Dynamic Cooldown Check (10s to 15s randomness)
+  // Dynamic Cooldown Check (8s to 12s randomness)
   const now = Date.now();
   const lastTime = threadCooldowns.get(threadID) || 0;
-  const dynamicCooldown = Math.floor(Math.random() * 5000) + 10000;
+  const dynamicCooldown = Math.floor(Math.random() * 4000) + 8000;
 
   if (now - lastTime < dynamicCooldown) return;
 
-  // 70% chance na sumagot
-  if (Math.random() > 0.70) return;
+  // 85% Chance na sumagot sa Kahit Sino
+  if (Math.random() > 0.85) return;
 
   threadCooldowns.set(threadID, now);
 
   const selectedRoast = ROASTS[Math.floor(Math.random() * ROASTS.length)];
-  const typingDelay = Math.floor(Math.random() * 2000) + 2000;
+  const typingDelay = Math.floor(Math.random() * 1500) + 1500;
 
   try {
     if (typeof api.sendTypingIndicator === "function") {
@@ -191,7 +194,7 @@ module.exports.handleEvent = async function ({ api, event }) {
 module.exports.run = async function ({ api, event, args }) {
   const { threadID, messageID, senderID } = event;
 
-  // ID Restriction Validation
+  // ID Restriction Validation para sa Control Commands
   if (String(senderID) !== ALLOWED_ID) {
     return api.sendMessage(
       "❌ Wala kang permiso para gamitin ang command na ito.",
@@ -207,13 +210,13 @@ module.exports.run = async function ({ api, event, args }) {
     config.active = true;
     saveConfig(config);
     return api.sendMessage(
-      "🥷🩸 TARANTADONG HALIMAW (SENO 100 MODE): ACTIVATED\n" +
+      "🥷🩸 TARANTADONG HALIMAW (NO PREFIX MODE): ACTIVATED\n" +
       "───────────────────\n" +
-      "🩸 Mode: Ninja Stealth Anti-Ban\n" +
-      "🥷 Scope: Private Messages & Group Chats\n" +
-      "🩸 Target: Random Seno Troller Replies\n" +
+      "🩸 Mode: Ninja Stealth Auto-Roast\n" +
+      "🥷 Scope: Kahit Sino sa GC at PM\n" +
+      "🩸 Target: Random 100 Seno Troll Replies\n" +
       "───────────────────\n" +
-      "🩸 Gamitin ang `/halimaw off` para i-turn off.",
+      "🩸 Gamitin ang `halimaw off` para i-turn off.",
       threadID,
       messageID
     );
@@ -239,7 +242,8 @@ module.exports.run = async function ({ api, event, args }) {
       "📊 TARANTADONG HALIMAW STATUS\n" +
       "───────────────────\n" +
       `• Status: ${statusSymbol}\n` +
-      `• Mode: 100 Seno Troll Replies\n` +
+      `• Target: Kahit sino sa chat\n` +
+      `• Prefix: Wala (No Prefix)\n` +
       "───────────────────",
       threadID,
       messageID
@@ -249,9 +253,9 @@ module.exports.run = async function ({ api, event, args }) {
   return api.sendMessage(
     "🥷🩸 TARANTADONG HALIMAW PANEL\n" +
     "───────────────────\n" +
-    "▶️ /halimaw on  — Simulan ang stealth auto-roast\n" +
-    "⏸️ /halimaw off — I-off ang auto-roast\n" +
-    "📈 /halimaw status — I-check ang status\n" +
+    "▶️ halimaw on  — Simulan ang auto-roast sa lahat\n" +
+    "⏸️ halimaw off — I-off ang auto-roast\n" +
+    "📈 halimaw status — I-check ang status\n" +
     "───────────────────",
     threadID,
     messageID
