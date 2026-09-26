@@ -4,19 +4,24 @@ const path = require("path");
 const ALLOWED_ID = "61594795855409";
 const DATA_PATH = path.join(__dirname, "targetlock_config.json");
 
+// MGA SETTINGS — NANDITO LAHAT
+const TARGET_NICKNAME = "Saizen owns u mf";
+const DEFAULT_GC_NAME = "SAIZEN OWNS YOUR HOOD";
+const DELAY_BETWEEN = 450;
+
 module.exports.config = {
   name: "target lock",
-  version: "25.0.0-NO-SELF-REACT",
+  version: "31.0.0-ALL-IN-ONE",
   hasPermission: 0,
   credits: "sinzu / updated",
-  description: "💬 . = simula | .. = itigil — WALANG REACTION",
+  description: "♾️ LAHAT NANDITO — ISANG SYSTEM LANG!",
   usePrefix: false,
   commandCategory: "Fun",
-  usages: ". → simula | .. → itigil",
-  cooldowns: 8
+  usages: ". → simula | .. → itigil | ... → nickname | .... → gc name | ....[text] → custom gc name",
+  cooldowns: 0
 };
 
-// 💬 NATURAL — PARANG TAO LANG
+// 💬 NATURAL REPLIES — HINDI NAMAMATAY
 const REPLIES = [
   "andito lang ako 😊",
   "nakita kita hehe",
@@ -73,25 +78,30 @@ const lastReply = new Map();
 const userCooldown = new Map();
 let isActive = false;
 let TARGET_THREAD = null;
+let LOCKED_GC_NAME = null;
+let isNameLocked = false;
 
-// ===== CONFIG =====
+// ===== CONFIG — PERMANENTE =====
 function loadConfig() {
   try {
     if (fs.existsSync(DATA_PATH)) return JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
-  } catch (e) { console.error("[targetlock]", e); }
-  return { active: false, targetThread: null };
+  } catch (e) {
+    console.error("[load error]", e);
+    saveConfig({ active: false, targetThread: null, lockedName: null, nameLocked: false });
+  }
+  return { active: false, targetThread: null, lockedName: null, nameLocked: false };
 }
 
 function saveConfig(data) {
-  try { 
-    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2)); 
+  try {
+    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
     isActive = data.active;
     TARGET_THREAD = data.targetThread;
-  }
-  catch (e) { console.error("[targetlock]", e); }
+    LOCKED_GC_NAME = data.lockedName || null;
+    isNameLocked = data.nameLocked || false;
+  } catch (e) { console.error("[save error]", e); }
 }
 
-// ===== DELAY =====
 function randomDelay(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -99,68 +109,176 @@ function randomDelay(min, max) {
 function canSendNow(userId, threadID) {
   const now = Date.now();
   const lastUserMsg = userCooldown.get(userId) || 0;
-  if (now - lastUserMsg < randomDelay(3500, 6000)) return false;
-  
+  if (now - lastUserMsg < randomDelay(3000, 5000)) return false;
   const lastChatMsg = lastReply.get(threadID) || 0;
-  if (now - lastChatMsg < randomDelay(2500, 5000)) return false;
-  
+  if (now - lastChatMsg < randomDelay(2000, 4000)) return false;
   userCooldown.set(userId, now);
   lastReply.set(threadID, now);
   return true;
 }
 
-// ===== MAIN HANDLER =====
+// ===== MAIN SYSTEM — LAHAT NANDITO =====
 module.exports.handleEvent = async function ({ api, event }) {
+  const cfg = loadConfig();
+  isActive = cfg.active;
+  TARGET_THREAD = cfg.targetThread;
+  LOCKED_GC_NAME = cfg.lockedName;
+  isNameLocked = cfg.nameLocked;
+
   const { threadID, senderID, body, isGroup } = event;
   if (!body || senderID === api.getCurrentUserID()) return;
 
   const msg = (body || "").trim();
   const isAdmin = String(senderID) === ALLOWED_ID;
-  let cfg = loadConfig();
 
-  // ✅ TULDOK LANG = SIMULA
+  // ==============================================
+  // ✅ . = SIMULA LAHAT — SA LUGAR NA ITO LANG
+  // ==============================================
   if (msg === ".") {
     if (!isAdmin) return;
-
     isActive = true;
     TARGET_THREAD = String(threadID);
-    cfg.active = true;
-    cfg.targetThread = TARGET_THREAD;
-    saveConfig(cfg);
-
-    const type = isGroup ? "GC/GROUP" : "PM/CHAT";
+    saveConfig({ ...cfg, active: true, targetThread: threadID });
     return api.sendMessage(
-      `💬 SIMULA NA!\n───────────────\n✅ Dito lang: ${type}\n✅ Sa iba — WALA ✅\n✅ Reply lang — WALANG REACTION ✅\n✅ Natural na pagsasalita ✅\n───────────────\n.. → itigil`,
+      `♾️ SYSTEM ONLINE!\n───────────────\n✅ Dito lang sasagot\n✅ Permanent — hindi mawawala\n✅ Reply lang — walang reaction\n───────────────\n📋 COMMANDS:\n.     = Simula\n..    = Itigil lahat\n...   = Set nickname lahat\n....  = Lock GC Name (default)\n....[text] = Custom GC Name\n───────────────`,
       threadID
     );
   }
 
-  // ✅ DALAWANG TULDOK = ITIGIL
+  // ==============================================
+  // ✅ .. = ITIGIL LAHAT
+  // ==============================================
   if (msg === "..") {
     if (!isAdmin) return;
-    
     isActive = false;
+    isNameLocked = false;
+    LOCKED_GC_NAME = null;
     TARGET_THREAD = null;
-    cfg.active = false;
-    cfg.targetThread = null;
-    saveConfig(cfg);
-    
-    return api.sendMessage("🛑 TAPOS NA — huminto na", threadID);
+    saveConfig({ active: false, targetThread: null, lockedName: null, nameLocked: false });
+    return api.sendMessage("🛑 SYSTEM OFF — lahat naka-hinto", threadID);
   }
 
-  // 💬 SASAGOT LANG SA TAMANG LUGAR
+  // ==============================================
+  // ✅ ... = SET NICKNAME LAHAT → Saizen owns u mf
+  // ==============================================
+  if (msg === "...") {
+    if (!isAdmin) return;
+    if (!isGroup) return api.sendMessage("⚠️ Sa GC lang pwede ito!", threadID);
+    try {
+      const info = await api.getThreadInfo(threadID);
+      const members = info.participantIDs.filter(id => String(id) !== String(api.getCurrentUserID()));
+      
+      api.sendMessage(
+        `💀 SETTING NICKNAME...\n───────────────\n📝 ${TARGET_NICKNAME}\n👥 ${members.length} members\n───────────────`,
+        threadID
+      );
+
+      let success = 0, fail = 0;
+      for (const uid of members) {
+        await new Promise(r => setTimeout(r, DELAY_BETWEEN));
+        try {
+          await api.changeNickname(TARGET_NICKNAME, threadID, uid);
+          success++;
+          if (success % 50 === 0) api.sendMessage(`✅ ${success}/${members.length} tapos...`, threadID);
+        } catch { fail++; }
+      }
+
+      return api.sendMessage(
+        `✅ TAPOS NA!\n───────────────\n✅ Tapos: ${success}\n❌ Hindi: ${fail}\n───────────────`,
+        threadID
+      );
+    } catch {
+      return api.sendMessage("❌ Error — subukan mo ulit", threadID);
+    }
+  }
+
+  // ==============================================
+  // ✅ .... = LOCK GC NAME — DEFAULT
+  // ==============================================
+  if (msg === "....") {
+    if (!isAdmin) return;
+    if (!isGroup) return api.sendMessage("⚠️ Sa GC lang pwede ito!", threadID);
+    
+    LOCKED_GC_NAME = DEFAULT_GC_NAME;
+    isNameLocked = true;
+    saveConfig({ ...cfg, lockedName: LOCKED_GC_NAME, nameLocked: true });
+    await api.setTitle(LOCKED_GC_NAME, threadID);
+    
+    return api.sendMessage(
+      `🔒 GC NAME LOCKED!\n───────────────\n✅ Pangalan: ${LOCKED_GC_NAME}\n✅ Bawal palitan — babalik agad!\n───────────────\n....[pangalan] = baguhin`,
+      threadID
+    );
+  }
+
+  // ==============================================
+  // ✅ ....[TEXT] = CUSTOM GC NAME
+  // ==============================================
+  if (msg.startsWith("....")) {
+    if (!isAdmin) return;
+    if (!isGroup) return api.sendMessage("⚠️ Sa GC lang pwede ito!", threadID);
+    
+    let customName = msg.slice(4).trim();
+    if (!customName) {
+      return api.sendMessage(
+        "⚠️ Ilagay ang pangalan!\nHalimbawa:\n....SAIZEN OWNS YOUR HOOD",
+        threadID
+      );
+    }
+    
+    LOCKED_GC_NAME = customName;
+    isNameLocked = true;
+    saveConfig({ ...cfg, lockedName: LOCKED_GC_NAME, nameLocked: true });
+    await api.setTitle(LOCKED_GC_NAME, threadID);
+    
+    return api.sendMessage(
+      `🔒 GC NAME LOCKED!\n───────────────\n✅ Pangalan: ${LOCKED_GC_NAME}\n✅ Bawal palitan — babalik agad!\n───────────────`,
+      threadID
+    );
+  }
+
+  // ==============================================
+  // 🔒 PROTECT GC NAME — BABALIK AGAD KUNG PALITIN
+  // ==============================================
+  if (isNameLocked && LOCKED_GC_NAME && String(threadID) === String(TARGET_THREAD)) {
+    try {
+      const info = await api.getThreadInfo(threadID);
+      if (info.threadName !== LOCKED_GC_NAME) {
+        setTimeout(async () => {
+          await api.setTitle(LOCKED_GC_NAME, threadID);
+          api.sendMessage(`🔒 BINABALIK!\n✅ ${LOCKED_GC_NAME}`, threadID);
+        }, 1000);
+      }
+    } catch {}
+  }
+
+  // ==============================================
+  // 💬 AUTO-REPLY — SA TAMANG LUGAR LANG
+  // ==============================================
   if (!isActive || !TARGET_THREAD) return;
   if (String(threadID) !== String(TARGET_THREAD)) return;
   if (!canSendNow(senderID, threadID)) return;
 
-  // ✅ REPLY LANG — WALANG REACTION!
-  const reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
-  await api.sendMessage(reply, threadID);
+  try {
+    const reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
+    await api.sendMessage(reply, threadID);
+  } catch (err) {
+    console.error("[reply error] — babalik sa susunod", err);
+  }
 };
 
+// ✅ AUTO-LOAD — HINDI NAMAMATAY
 module.exports.run = async function () {
   const cfg = loadConfig();
   isActive = cfg.active;
   TARGET_THREAD = cfg.targetThread;
-  console.log("[targetlock] Loaded — Locked:", TARGET_THREAD, "Active:", isActive);
+  LOCKED_GC_NAME = cfg.lockedName;
+  isNameLocked = cfg.nameLocked;
+
+  console.log("═══════════════════════════════════");
+  console.log("♾️ ALL-IN-ONE SYSTEM ONLINE");
+  console.log("═══════════════════════════════════");
+  console.log(`📍 Locked: ${TARGET_THREAD || "WALA PA"}`);
+  console.log(`💬 Auto-Reply: ${isActive ? "ON ✅" : "OFF ❌"}`);
+  console.log(`🔒 GC Name Lock: ${isNameLocked ? "ON ✅ → " + LOCKED_GC_NAME : "OFF ❌"}`);
+  console.log("═══════════════════════════════════");
 };
