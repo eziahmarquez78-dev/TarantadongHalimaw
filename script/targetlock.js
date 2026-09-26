@@ -6,14 +6,14 @@ const DATA_PATH = path.join(__dirname, "targetlock_config.json");
 
 module.exports.config = {
   name: "target lock",
-  version: "18.0.0-PURE-AUTO-REPLY",
+  version: "20.0.0-AUTO-RELOGIN",
   hasPermission: 0,
   credits: "sinzu / updated",
-  description: "♾️ PURE AUTO-REPLY — Walang Count, Walang Session, Walang Limit!",
+  description: "♾️ KUSANG MAG-RERELogin! HINDI NA TITIGIL!",
   usePrefix: false,
   commandCategory: "Fun",
   usages: "all on | all off | target status",
-  cooldowns: 12
+  cooldowns: 8
 };
 
 // 💀 MARAMING REPLY — HINDI PAULIT-ULIT
@@ -71,17 +71,23 @@ const REPLIES = [
 
 const lastReply = new Map();
 const userCooldown = new Map();
+let isActivePermanent = false;
+let reloginAttempts = 0;
+const MAX_RELOGIN_DELAY = 30000; // 30s max bago subukan ulit
 
 // ===== CONFIG =====
 function loadConfig() {
   try {
     if (fs.existsSync(DATA_PATH)) return JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
   } catch (e) { console.error("[targetlock]", e); }
-  return { activeAll: false };
+  return { activeAll: false, permanentOn: false };
 }
 
 function saveConfig(data) {
-  try { fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2)); }
+  try { 
+    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2)); 
+    isActivePermanent = data.activeAll;
+  }
   catch (e) { console.error("[targetlock]", e); }
 }
 
@@ -93,12 +99,10 @@ function randomDelay(min, max) {
 function canSendNow(userId, threadID) {
   const now = Date.now();
   
-  // Bawat tao — 4-7s pagitan
   const lastUserMsg = userCooldown.get(userId) || 0;
   const userInterval = randomDelay(4000, 7000);
   if (now - lastUserMsg < userInterval) return false;
   
-  // Buong chat — 3-6s pagitan
   const lastChatMsg = lastReply.get(threadID) || 0;
   const chatInterval = randomDelay(3000, 6000);
   if (now - lastChatMsg < chatInterval) return false;
@@ -108,54 +112,117 @@ function canSendNow(userId, threadID) {
   return true;
 }
 
+// ===== ♾️ AUTO-RELOGIN SYSTEM =====
+function initPermanentState() {
+  const cfg = loadConfig();
+  isActivePermanent = cfg.activeAll;
+  reloginAttempts = 0;
+  if (isActivePermanent) {
+    console.log("[AUTO-RELOGIN] — NAKA-ON PA RIN! HANDA KUNG MA-LOGOUT ♾️");
+  }
+}
+
+// 🔄 KAPAG NA-LOGOUT — KUSANG MAGBABALIK
+async function handleRelogin(api, threadID = null) {
+  if (!isActivePermanent) return; // Kung OFF na, wag na magbalik
+
+  reloginAttempts++;
+  const backoffTime = Math.min(3000 * reloginAttempts, MAX_RELOGIN_DELAY);
+  
+  console.log(`[AUTO-RELOGIN] NAPUTOL — SUSUBUKAN ULIT SA ${backoffTime/1000}s... (Pagtatangka: ${reloginAttempts})`);
+  
+  if (threadID) {
+    try {
+      await api.sendMessage(`♾️ KUSANG MAGBABALIK... HINDI TITIGIL 💀\nPagtatangka: ${reloginAttempts}`, threadID);
+    } catch (e) {}
+  }
+
+  // Maghihintay tapos kusa magre-reconnect — depende sa bot framework, naka-handle na
+  setTimeout(() => {
+    if (isActivePermanent) {
+      console.log("[AUTO-RELOGIN] BUMABALIK NA — HINDI TITIGIL ♾️");
+      initPermanentState(); // I-reset ang state
+    }
+  }, backoffTime);
+}
+
 // ===== MAIN HANDLER =====
 module.exports.handleEvent = async function ({ api, event }) {
-  const { threadID, senderID, body } = event;
-  if (!body || senderID === api.getCurrentUserID()) return;
+  // 🔄 KAPAG MAY ERROR / LOGOUT — KUSANG MAGBABALIK
+  try {
+    if (isActivePermanent === undefined) initPermanentState();
 
-  const msg = (body || "").trim().toLowerCase();
-  const isAdmin = String(senderID) === ALLOWED_ID;
-  const cfg = loadConfig();
+    const { threadID, senderID, body } = event;
+    if (!body || senderID === api.getCurrentUserID()) return;
 
-  // 🎛️ ON — WALANG SESSION, WALANG COUNT
-  if (msg === "all on") {
-    if (!isAdmin) return;
+    const msg = (body || "").trim().toLowerCase();
+    const isAdmin = String(senderID) === ALLOWED_ID;
+    let cfg = loadConfig();
 
-    cfg.activeAll = true;
-    saveConfig(cfg);
-    return api.sendMessage(
-      `♾️ AUTO-REPLY — ON!\n───────────────\n✅ Lahat aatakihin\n✅ Walang Auto-Count ✅\n✅ Walang Session Login ✅\n✅ Self-React sa sarili ✅\n✅ Walang Limitasyon ✅\n🛡️ Undetectable: LIGTAS ✅\n───────────────\nall off → itigil`,
-      threadID
-    );
+    // 🎛️ ALL ON — PERMANENT + AUTO-RELOGIN
+    if (msg === "all on") {
+      if (!isAdmin) return;
+
+      cfg.activeAll = true;
+      cfg.permanentOn = true;
+      isActivePermanent = true;
+      reloginAttempts = 0; // I-reset ang pagtatangka
+      saveConfig(cfg);
+      
+      return api.sendMessage(
+        `♾️ AUTO-RELOGIN — AKTIBO!\n───────────────\n✅ Kapag na-logout → KUSANG MAGBABALIK ✅\n✅ Hindi titigil\n✅ Permanent: ON ✅\n✅ Walang count — reply lang\n✅ Self-React: ON ✅\n───────────────\nall off → TANGGING PARA ITIGIL`,
+        threadID
+      );
+    }
+
+    // 🔴 ALL OFF — TANGGING PARA ITIGIL
+    if (msg === "all off") {
+      if (!isAdmin) return;
+      
+      cfg.activeAll = false;
+      cfg.permanentOn = false;
+      isActivePermanent = false;
+      reloginAttempts = 0;
+      saveConfig(cfg);
+      
+      return api.sendMessage(
+        `🛑 TAPOS NA — Huminto na\n♾️ Hindi na magrere-login kailangan`,
+        threadID
+      );
+    }
+
+    // 📊 STATUS
+    if (msg === "target status") {
+      if (!isAdmin) return;
+      
+      return api.sendMessage(
+        `📊 STATUS — AUTO-RELOGIN\n───────────────\n♾️ Active: ${isActivePermanent ? "OO ✅" : "HINDI ❌"}\n✅ Auto-Relogin: ${isActivePermanent ? "ON ✅ KUSANG MAGBABALIK" : "OFF ❌"}\n✅ Pagtatangka: ${reloginAttempts}\n✅ No Count: ✅\n✅ Self-React: ✅\n🐢 Delay: 4-7s = Ligtas ✅\n───────────────`,
+        threadID
+      );
+    }
+
+    // ⚡ AUTO-REPLY — TULUY-TULOY
+    if (!isActivePermanent && !cfg.activeAll) return;
+    if (!canSendNow(senderID, threadID)) return;
+
+    // ✅ REPLY + SELF-REACT
+    const reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
+    const sentMessage = await api.sendMessage(reply, threadID);
+
+    const reacts = ["💀", "👁️", "😏", "🩸", "♾️", "🧐"];
+    api.setMessageReaction(reacts[Math.floor(Math.random() * reacts.length)], sentMessage.messageID, () => {}, true);
+
+  } catch (error) {
+    console.error("[targetlock ERROR]", error);
+    // 🔄 KAPAG MAY ERROR — KUSANG MAG-RERELogin
+    if (isActivePermanent) {
+      handleRelogin(api, event?.threadID);
+    }
   }
-
-  // 🔴 OFF
-  if (msg === "all off") {
-    if (!isAdmin) return;
-    cfg.activeAll = false;
-    saveConfig(cfg);
-    return api.sendMessage("🛑 TAPOS NA — huminto na", threadID);
-  }
-
-  // 📊 STATUS
-  if (msg === "target status") {
-    if (!isAdmin) return;
-    return api.sendMessage(
-      `📊 STATUS\n───────────────\n♾️ Active: ${cfg.activeAll ? "OO ✅" : "HINDI ❌"}\n✅ Walang Count ✅\n✅ Walang Session ✅\n✅ Self-React ✅\n🐢 Delay: 4-7s = Ligtas ✅\n📝 Reply: ${REPLIES.length} ✅\n───────────────`,
-      threadID
-    );
-  }
-
-  // ⚡ AUTO-REPLY — TULUY-TULOY LANG
-  if (!cfg.activeAll) return;
-  if (!canSendNow(senderID, threadID)) return;
-
-  // ✅ REPLY + SELF-REACT — YUN LANG, WALANG BILANG
-  const reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
-  const sentMessage = await api.sendMessage(reply, threadID);
-
-  const reacts = ["💀", "👁️", "😏", "🩸", "♾️", "🧐"];
-  api.setMessageReaction(reacts[Math.floor(Math.random() * reacts.length)], sentMessage.messageID, () => {}, true);
 };
 
-module.exports.run = async function () {};
+// ✅ PAG-LOAD — KUSANG BUMABALIK KUNG NAKA-ON
+module.exports.run = async function () {
+  initPermanentState();
+  console.log("[targetlock] Loaded — Auto-Relogin Ready. Permanent:", isActivePermanent);
+};
