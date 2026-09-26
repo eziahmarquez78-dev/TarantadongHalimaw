@@ -11,10 +11,10 @@ const DELAY_BETWEEN = 450;
 
 module.exports.config = {
   name: "target lock",
-  version: "39.0.0-FINAL-RULES",
+  version: "40.0.0-FIXED-REPLY-TO",
   hasPermission: 0,
   credits: "sinzu / updated",
-  description: "💀 STICKER = REPLY! ❌ NO LIKE/ZONE/REACT/GIF",
+  description: "💀 SIGURADONG MAGREREPLY NA — kasama reply-to message!",
   usePrefix: false,
   commandCategory: "Fun",
   usages: ".=on | ..=off | bilang naba ako=count | list=listahan",
@@ -165,8 +165,8 @@ const COUNT_SPEED = 600;
 const repliedUsers = new Map();
 let listThread = null;
 
-// ⚡ UNLI AUTOREPLY — WALANG LIMIT, TAMA ANG EXCEPTIONS
-const lastReplyCheck = new Map(); // iwas double reply
+// ⚡ UNLI AUTOREPLY
+const lastReplyCheck = new Map();
 
 let isActive = false;
 let TARGET_THREAD = null;
@@ -196,11 +196,9 @@ function shouldSkipReply(event, msg) {
   // ❌ LIKE / REACTIONS — skip
   if (event.type === "reaction" || event.reaction) return true;
 
-  // ❌ LIKE / ZONE — skip
+  // ❌ LIKE / ZONE — skip (exact match lang para hindi makaapekto sa ibang salita)
   const lowerMsg = (msg || "").toLowerCase().trim();
-  if (lowerMsg === "like" || lowerMsg === "zone" || lowerMsg.includes("like") || lowerMsg.includes("zone")) {
-    return true;
-  }
+  if (lowerMsg === "like" || lowerMsg === "zone") return true;
 
   // ❌ GIF — skip
   if (event.attachments?.length > 0) {
@@ -214,16 +212,16 @@ function shouldSkipReply(event, msg) {
 
   // ✅ STICKER = ALLOWED!
   // ✅ TEXT = ALLOWED!
+  // ✅ REPLY-TO MESSAGE = ALLOWED!
   // ✅ LAHAT IBA = ALLOWED!
 
   return false;
 }
 
-// ✅ PWEDENG MAG-REPLY? UNLI PERO WALANG DOUBLE
+// ✅ PWEDENG MAG-REPLY?
 function canReplyNow(userId) {
   const now = Date.now();
   const last = lastReplyCheck.get(userId) || 0;
-  // ~0.8 sec bawat reply — hindi magdidoble, hindi maghihintay ng matagal
   if (now - last < 800) return false;
   lastReplyCheck.set(userId, now);
   return true;
@@ -330,8 +328,17 @@ module.exports.handleEvent = async function ({ api, event }) {
   isActive = cfg.active; TARGET_THREAD = cfg.targetThread;
   LOCKED_GC_NAME = cfg.lockedName; isNameLocked = cfg.nameLocked;
 
-  const { threadID, senderID, body, isGroup } = event;
-  const msg = (body || "").trim();
+  const { threadID, senderID, body, isGroup, messageReply } = event;
+  
+  // ✅ KUNIN ANG TEXT — KAHIT REPLY-TO MESSAGE!
+  let msg = "";
+  if (body && body.trim()) {
+    msg = body.trim();
+  } else if (messageReply?.body && messageReply.body.trim()) {
+    msg = messageReply.body.trim();
+  }
+  // Kung sticker lang o attachment na walang text — pwede pa rin!
+
   const isAdmin = String(senderID) === ALLOWED_ID;
   const senderIdStr = String(senderID);
 
@@ -373,6 +380,7 @@ module.exports.handleEvent = async function ({ api, event }) {
       `───────────────\n` +
       `✅ TEXT = REPLY ✅\n` +
       `✅ STICKER = REPLY ✅\n` +
+      `✅ REPLY-TO = REPLY ✅\n` +
       `❌ LIKE/ZONE = NO REPLY ❌\n` +
       `❌ REACTIONS = NO REPLY ❌\n` +
       `❌ GIF = NO REPLY ❌\n` +
@@ -468,7 +476,7 @@ module.exports.handleEvent = async function ({ api, event }) {
     repliedUsers.get(senderIdStr).gone = false;
   }
 
-  // ✅ MAG-REPLY — UNLI!
+  // ✅ MAG-REPLY — SIGURADO NA!
   try {
     await api.sendMessage(REPLIES[Math.floor(Math.random() * REPLIES.length)], threadID);
   } catch (e) { console.error("[reply error]", e); }
@@ -476,10 +484,11 @@ module.exports.handleEvent = async function ({ api, event }) {
 
 module.exports.run = async function () {
   console.log("═══════════════════════════════════");
-  console.log(`🤖 ${BOT_NAME} — UNLI AUTOREPLY ONLINE`);
+  console.log(`🤖 ${BOT_NAME} — FIXED & ONLINE ✅`);
   console.log("═══════════════════════════════════");
   console.log(`✅ TEXT = REPLY`);
   console.log(`✅ STICKER = REPLY`);
+  console.log(`✅ REPLY-TO MESSAGE = REPLY`);
   console.log(`❌ LIKE/ZONE = NO REPLY`);
   console.log(`❌ REACTIONS = NO REPLY`);
   console.log(`❌ GIF = NO REPLY`);
