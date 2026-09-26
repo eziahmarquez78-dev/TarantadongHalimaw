@@ -11,10 +11,10 @@ const DELAY_BETWEEN = 450;
 
 module.exports.config = {
   name: "target lock",
-  version: "37.0.0-STRICT-REPLY",
+  version: "39.0.0-FINAL-RULES",
   hasPermission: 0,
   credits: "sinzu / updated",
-  description: "💀 Kahit anong message = 1 reply lang — walang sticker/gif/like/zone",
+  description: "💀 STICKER = REPLY! ❌ NO LIKE/ZONE/REACT/GIF",
   usePrefix: false,
   commandCategory: "Fun",
   usages: ".=on | ..=off | bilang naba ako=count | list=listahan",
@@ -165,10 +165,8 @@ const COUNT_SPEED = 600;
 const repliedUsers = new Map();
 let listThread = null;
 
-// ⚡ STRICT REPLY — 1 MESSAGE = 1 REPLY LANG
-const lastReplyPerUser = new Map(); // userId → lastMsgTimestamp
-
-const EXCLUDE_KEYWORDS = ["like", "zone"]; // wag replyan kapag ganito
+// ⚡ UNLI AUTOREPLY — WALANG LIMIT, TAMA ANG EXCEPTIONS
+const lastReplyCheck = new Map(); // iwas double reply
 
 let isActive = false;
 let TARGET_THREAD = null;
@@ -190,36 +188,44 @@ function saveConfig(data) {
   } catch (e) { console.error("[save error]", e); }
 }
 
-// ✅ CHECK: DAPAT BA I-REPLYAN?
+// ⛔ DAPAT HINDI I-REPLYAN
 function shouldSkipReply(event, msg) {
-  // Skip kung sariling message
-  if (event.senderID === event.api.getCurrentUserID()) return true;
-  
-  // Skip sticker, gif, attachment na walang text
-  if (event.type === "message" && !event.body && event.attachments?.length > 0) {
-    const hasSticker = event.attachments.some(a => a.type === "sticker" || a.type === "animated_image");
-    if (hasSticker) return true;
-  }
-  
-  // Skip like/zone keywords
-  const lowerMsg = msg.toLowerCase().trim();
-  if (EXCLUDE_KEYWORDS.some(word => lowerMsg === word || lowerMsg.includes(word))) {
+  // Sariling message — laging skip
+  if (String(event.senderID) === String(event.api.getCurrentUserID())) return true;
+
+  // ❌ LIKE / REACTIONS — skip
+  if (event.type === "reaction" || event.reaction) return true;
+
+  // ❌ LIKE / ZONE — skip
+  const lowerMsg = (msg || "").toLowerCase().trim();
+  if (lowerMsg === "like" || lowerMsg === "zone" || lowerMsg.includes("like") || lowerMsg.includes("zone")) {
     return true;
   }
-  
-  // Skip kung wala talagang text
-  if (!msg && (!event.attachments || event.attachments.length === 0)) return true;
-  
+
+  // ❌ GIF — skip
+  if (event.attachments?.length > 0) {
+    const hasGif = event.attachments.some(a => 
+      a.type === "animated_image" || 
+      (a.filename && a.filename.endsWith(".gif")) ||
+      (a.mimeType && a.mimeType === "image/gif")
+    );
+    if (hasGif) return true;
+  }
+
+  // ✅ STICKER = ALLOWED!
+  // ✅ TEXT = ALLOWED!
+  // ✅ LAHAT IBA = ALLOWED!
+
   return false;
 }
 
-// ✅ CHECK: 1 MESSAGE = 1 REPLY LANG
+// ✅ PWEDENG MAG-REPLY? UNLI PERO WALANG DOUBLE
 function canReplyNow(userId) {
   const now = Date.now();
-  const lastMsgTime = lastReplyPerUser.get(userId) || 0;
-  // 1 reply lang bawat message — hindi mag-uulit sa parehong message
-  if (now - lastMsgTime < 1000) return false; // iwas double reply
-  lastReplyPerUser.set(userId, now);
+  const last = lastReplyCheck.get(userId) || 0;
+  // ~0.8 sec bawat reply — hindi magdidoble, hindi maghihintay ng matagal
+  if (now - last < 800) return false;
+  lastReplyCheck.set(userId, now);
   return true;
 }
 
@@ -359,16 +365,17 @@ module.exports.handleEvent = async function ({ api, event }) {
     isActive = true; TARGET_THREAD = String(threadID);
     isCountingMode = false; countThread = null;
     listThread = String(threadID);
-    lastReplyPerUser.clear();
+    lastReplyCheck.clear();
     if (countTimer) clearTimeout(countTimer);
     saveConfig({ ...cfg, active: true, targetThread: threadID });
     return api.sendMessage(
-      `🤖 ${BOT_NAME} — KALABAN MODE ON!\n` +
+      `🤖 ${BOT_NAME} — UNLI AUTOREPLY ON!\n` +
       `───────────────\n` +
-      `✅ Kahit anong message = 1 reply lang\n` +
-      `❌ Hindi replyan: Like/Zone/Sticker/GIF\n` +
-      `✅ "bilang naba ako" = 🔢 Bilang 1-50\n` +
-      `✅ "list" = 📋 Listahan ng nawala\n` +
+      `✅ TEXT = REPLY ✅\n` +
+      `✅ STICKER = REPLY ✅\n` +
+      `❌ LIKE/ZONE = NO REPLY ❌\n` +
+      `❌ REACTIONS = NO REPLY ❌\n` +
+      `❌ GIF = NO REPLY ❌\n` +
       `───────────────`,
       threadID
     );
@@ -383,7 +390,7 @@ module.exports.handleEvent = async function ({ api, event }) {
     if (countTimer) clearTimeout(countTimer);
     TARGET_THREAD = LOCKED_GC_NAME = null;
     repliedUsers.clear();
-    lastReplyPerUser.clear();
+    lastReplyCheck.clear();
     saveConfig({});
     return api.sendMessage(`🛑 [${BOT_NAME}] LAHAT TUMIGIL — LISTAHAN NABURA`, threadID);
   }
@@ -438,17 +445,17 @@ module.exports.handleEvent = async function ({ api, event }) {
     } catch {}
   }
 
-  // 💬 MAIN REPLY SYSTEM
+  // 💬 MAIN UNLI AUTOREPLY SYSTEM
   if (!isActive || !TARGET_THREAD || String(threadID) !== String(TARGET_THREAD)) return;
   if (isCountingMode) return;
 
-  // ⛔ SKIP CHECK
+  // ⛔ CHECK: DAPAT SKIP?
   if (shouldSkipReply(event, msg)) return;
 
-  // ⚡ 1 MESSAGE = 1 REPLY LANG
+  // ✅ PWEDE MAG-REPLY?
   if (!canReplyNow(senderIdStr)) return;
 
-  // 📋 RECORD USER
+  // 📋 I-RECORD SA LISTAHAN
   if (!repliedUsers.has(senderIdStr)) {
     repliedUsers.set(senderIdStr, { name: null, lastSeen: Date.now(), gone: false });
     try {
@@ -461,7 +468,7 @@ module.exports.handleEvent = async function ({ api, event }) {
     repliedUsers.get(senderIdStr).gone = false;
   }
 
-  // ✅ SEND REPLY
+  // ✅ MAG-REPLY — UNLI!
   try {
     await api.sendMessage(REPLIES[Math.floor(Math.random() * REPLIES.length)], threadID);
   } catch (e) { console.error("[reply error]", e); }
@@ -469,12 +476,13 @@ module.exports.handleEvent = async function ({ api, event }) {
 
 module.exports.run = async function () {
   console.log("═══════════════════════════════════");
-  console.log(`🤖 ${BOT_NAME} — SYSTEM ONLINE`);
+  console.log(`🤖 ${BOT_NAME} — UNLI AUTOREPLY ONLINE`);
   console.log("═══════════════════════════════════");
-  console.log(`💬 Kalaban: ${isActive ? "ON ✅" : "OFF ❌"}`);
-  console.log(`🔢 Bilang: ${isCountingMode ? "ON ✅" : "OFF ❌"}`);
-  console.log(`📋 Listahan: ${listThread ? "TRACKING ✅" : "OFF ❌"}`);
-  console.log(`🔒 GC Lock: ${isNameLocked ? "ON ✅" : "OFF ❌"}`);
-  console.log(`⚡ Strict Reply: 1msg=1reply ✅`);
+  console.log(`✅ TEXT = REPLY`);
+  console.log(`✅ STICKER = REPLY`);
+  console.log(`❌ LIKE/ZONE = NO REPLY`);
+  console.log(`❌ REACTIONS = NO REPLY`);
+  console.log(`❌ GIF = NO REPLY`);
+  console.log(`⚡ UNLI reply — walang limit`);
   console.log("═══════════════════════════════════");
 };
