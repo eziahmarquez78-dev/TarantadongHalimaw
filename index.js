@@ -1,7 +1,24 @@
 'use strict';
 
-const { spawn } = require('child_process');
+const {
+    spawn
+} = require('child_process');
+
+const fs = require('fs');
 const path = require('path');
+
+/*
+|--------------------------------------------------------------------------
+| MAIN SCRIPT
+|--------------------------------------------------------------------------
+*/
+
+const SCRIPT_FILE = 'auto.js';
+
+const SCRIPT_PATH = path.join(
+    __dirname,
+    SCRIPT_FILE
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -9,32 +26,64 @@ const path = require('path');
 |--------------------------------------------------------------------------
 */
 
-const SCRIPT_FILE = 'index.js';
+const CONFIG = {
 
-const SCRIPT_PATH = path.join(
-  __dirname,
-  SCRIPT_FILE
+    // Delay bago mag-restart
+    restartDelay: 5000,
+
+    // Maximum crash restarts
+    maxRestarts: 5,
+
+    // Crash counting window
+    crashWindow: 60000,
+
+    // Kapag tumakbo nang ganito katagal,
+    // reset ang crash counter
+    healthyTime: 120000,
+
+    // Watchdog check interval
+    watchdogInterval: 15000,
+
+    // Maximum time na walang activity
+    watchdogTimeout: 60000,
+
+    // Graceful shutdown timeout
+    shutdownTimeout: 10000
+
+};
+
+/*
+|--------------------------------------------------------------------------
+| DATA
+|--------------------------------------------------------------------------
+*/
+
+const DATA_DIR = path.join(
+    __dirname,
+    'data'
 );
 
-const NODE = process.execPath;
+const HEARTBEAT_FILE = path.join(
+    DATA_DIR,
+    'supervisor-heartbeat.json'
+);
 
-const CONFIG = {
-  // Delay bago mag-restart
-  restartDelay: 5000,
+/*
+|--------------------------------------------------------------------------
+| CREATE DATA DIRECTORY
+|--------------------------------------------------------------------------
+*/
 
-  // Maximum restart attempts sa loob ng crash window
-  maxRestarts: 5,
+if (!fs.existsSync(DATA_DIR)) {
 
-  // Crash window
-  crashWindow: 60000,
+    fs.mkdirSync(
+        DATA_DIR,
+        {
+            recursive: true
+        }
+    );
 
-  // Kapag umabot dito nang walang crash,
-  // mare-reset ang restart counter
-  healthyTime: 120000,
-
-  // Graceful shutdown timeout
-  shutdownTimeout: 10000
-};
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -42,17 +91,23 @@ const CONFIG = {
 |--------------------------------------------------------------------------
 */
 
-let child = null;
+let main = null;
 
 let shuttingDown = false;
+
+let restartTimer = null;
+
+let watchdogTimer = null;
+
+let healthyTimer = null;
 
 let restartCount = 0;
 
 let restartWindowStart = Date.now();
 
-let healthyTimer = null;
+let startedAt = 0;
 
-let restartTimer = null;
+let watchdogRestarting = false;
 
 /*
 |--------------------------------------------------------------------------
@@ -61,24 +116,116 @@ let restartTimer = null;
 */
 
 function log(message) {
-  console.log(
-    `[SUPERVISOR] ${new Date().toISOString()} ${message}`
-  );
+
+    console.log(
+        `[SUPERVISOR] ${new Date().toISOString()} ${message}`
+    );
+
 }
 
 /*
 |--------------------------------------------------------------------------
-| RESET CRASH COUNTER
+| HEARTBEAT
 |--------------------------------------------------------------------------
 */
 
-function resetCrashCounter() {
-  restartCount = 0;
-  restartWindowStart = Date.now();
+function writeHeartbeat(status) {
 
-  log(
-    'Process stayed healthy. Restart counter reset.'
-  );
+    try {
+
+        const data = {
+
+            status,
+
+            pid: process.pid,
+
+            childPid:
+                main
+                    ? main.pid
+                    : null,
+
+            uptime:
+                Math.floor(
+                    process.uptime()
+                ),
+
+            childUptime:
+                main && startedAt
+                    ? Math.floor(
+                        (
+                            Date.now() -
+                            startedAt
+                        ) / 1000
+                    )
+                    : 0,
+
+            timestamp:
+                Date.now()
+
+        };
+
+        fs.writeFileSync(
+            HEARTBEAT_FILE,
+            JSON.stringify(
+                data,
+                null,
+                2
+            )
+        );
+
+    } catch (error) {
+
+        log(
+            `Heartbeat error: ${error.message}`
+        );
+
+    }
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| KEEPALIVE
+|--------------------------------------------------------------------------
+*/
+
+function keepAlive() {
+
+    writeHeartbeat(
+        main
+            ? 'online'
+            : 'waiting'
+    );
+
+}
+
+/*
+ * Update heartbeat every 10 seconds
+ */
+
+const keepaliveTimer =
+    setInterval(
+        keepAlive,
+        10000
+    );
+
+/*
+|--------------------------------------------------------------------------
+| RESET RESTART COUNTER
+|--------------------------------------------------------------------------
+*/
+
+function resetRestartCounter() {
+
+    restartCount = 0;
+
+    restartWindowStart =
+        Date.now();
+
+    log(
+        'Process stayed healthy. Restart counter reset.'
+    );
+
 }
 
 /*
@@ -88,198 +235,256 @@ function resetCrashCounter() {
 */
 
 function canRestart() {
-  const now = Date.now();
 
-  /*
-   * New crash window
-   */
-  if (
-    now - restartWindowStart >
-    CONFIG.crashWindow
-  ) {
-    restartCount = 0;
-    restartWindowStart = now;
-  }
+    const now =
+        Date.now();
 
-  restartCount++;
+    /*
+     * New crash window
+     */
 
-  /*
-   * Prevent infinite crash loop
-   */
-  if (
-    restartCount >
-    CONFIG.maxRestarts
-  ) {
-    log(
-      `Restart limit reached (${CONFIG.maxRestarts}).`
-    );
+    if (
+        now -
+            restartWindowStart >
+        CONFIG.crashWindow
+    ) {
 
-    return false;
-  }
+        restartCount = 0;
 
-  return true;
+        restartWindowStart =
+            now;
+
+    }
+
+    restartCount++;
+
+    if (
+        restartCount >
+        CONFIG.maxRestarts
+    ) {
+
+        log(
+            `Restart limit reached (${CONFIG.maxRestarts}).`
+        );
+
+        return false;
+
+    }
+
+    return true;
+
 }
 
 /*
 |--------------------------------------------------------------------------
-| START MAIN PROCESS
+| START AUTO.JS
 |--------------------------------------------------------------------------
 */
 
 function start() {
-  if (shuttingDown) {
-    return;
-  }
 
-  if (child) {
+    if (shuttingDown) {
+
+        return;
+
+    }
+
+    if (main) {
+
+        log(
+            'auto.js is already running.'
+        );
+
+        return;
+
+    }
+
+    watchdogRestarting = false;
+
+    startedAt =
+        Date.now();
+
     log(
-      'Main process is already running.'
+        `Starting ${SCRIPT_FILE}...`
     );
 
-    return;
-  }
+    /*
+     * Use the same Node.js executable
+     * that is running this supervisor.
+     */
 
-  log(
-    `Starting ${SCRIPT_FILE}...`
-  );
+    main = spawn(
+        process.execPath,
+        [
+            SCRIPT_PATH
+        ],
+        {
 
-  child = spawn(
-    NODE,
-    [SCRIPT_PATH],
-    {
-      cwd: __dirname,
+            cwd: __dirname,
 
-      stdio: 'inherit',
+            stdio: 'inherit',
 
-      shell: false,
+            shell: false,
 
-      env: {
-        ...process.env,
+            env: {
 
-        NODE_ENV:
-          process.env.NODE_ENV ||
-          'production'
-      }
-    }
-  );
+                ...process.env,
 
-  const startedAt = Date.now();
+                NODE_ENV:
+                    process.env.NODE_ENV ||
+                    'production'
 
-  /*
-   * Healthy-process timer
-   */
-  healthyTimer = setTimeout(() => {
-    if (
-      child &&
-      Date.now() - startedAt >=
-        CONFIG.healthyTime
-    ) {
-      resetCrashCounter();
-    }
-  }, CONFIG.healthyTime);
+            }
 
-  /*
-   * Spawn error
-   */
-  child.on(
-    'error',
-    error => {
-      log(
-        `Failed to start ${SCRIPT_FILE}: ${
-          error.message
-        }`
-      );
-    }
-  );
+        }
+    );
 
-  /*
-   * Process exit
-   */
-  child.on(
-    'exit',
-    (code, signal) => {
-      /*
-       * Clear healthy timer
-       */
-      if (healthyTimer) {
-        clearTimeout(
-          healthyTimer
+    /*
+     * Initial heartbeat
+     */
+
+    writeHeartbeat(
+        'starting'
+    );
+
+    /*
+     * Healthy timer
+     */
+
+    healthyTimer =
+        setTimeout(
+            () => {
+
+                if (
+                    main &&
+                    Date.now() -
+                        startedAt >=
+                    CONFIG.healthyTime
+                ) {
+
+                    resetRestartCounter();
+
+                }
+
+            },
+            CONFIG.healthyTime
         );
 
-        healthyTimer = null;
-      }
+    /*
+     * Spawn error
+     */
 
-      /*
-       * Remove child reference
-       */
-      child = null;
+    main.on(
+        'error',
+        error => {
 
-      /*
-       * Shutdown mode
-       */
-      if (shuttingDown) {
-        log(
-          'Main process stopped during shutdown.'
-        );
+            log(
+                `Failed to start ${SCRIPT_FILE}: ${error.message}`
+            );
 
-        return;
-      }
+        }
+    );
 
-      /*
-       * Signal exit
-       */
-      if (signal) {
-        log(
-          `Main process stopped by signal ${signal}.`
-        );
-      } else {
-        log(
-          `Main process exited with code ${
-            code ?? 'unknown'
-          }.`
-        );
-      }
+    /*
+     * Process exit
+     */
 
-      /*
-       * Normal exit
-       */
-      if (code === 0) {
-        log(
-          `Restarting normally in ${
-            CONFIG.restartDelay / 1000
-          } seconds...`
-        );
+    main.on(
+        'exit',
+        (
+            code,
+            signal
+        ) => {
 
-        scheduleRestart();
+            /*
+             * Clear healthy timer
+             */
 
-        return;
-      }
+            if (healthyTimer) {
 
-      /*
-       * Crash restart limit
-       */
-      if (!canRestart()) {
-        log(
-          'Supervisor stopped to prevent a crash loop.'
-        );
+                clearTimeout(
+                    healthyTimer
+                );
 
-        return;
-      }
+                healthyTimer = null;
 
-      /*
-       * Schedule crash restart
-       */
-      log(
-        `Restart attempt ${restartCount}/${
-          CONFIG.maxRestarts
-        } in ${
-          CONFIG.restartDelay / 1000
-        } seconds...`
-      );
+            }
 
-      scheduleRestart();
-    }
-  );
+            /*
+             * Remove child reference
+             */
+
+            main = null;
+
+            /*
+             * Update heartbeat
+             */
+
+            writeHeartbeat(
+                'stopped'
+            );
+
+            /*
+             * Shutdown
+             */
+
+            if (shuttingDown) {
+
+                log(
+                    'auto.js stopped during shutdown.'
+                );
+
+                return;
+
+            }
+
+            /*
+             * Log exit reason
+             */
+
+            if (signal) {
+
+                log(
+                    `auto.js stopped by signal ${signal}.`
+                );
+
+            } else {
+
+                log(
+                    `auto.js exited with code ${code}.`
+                );
+
+            }
+
+            /*
+             * Check restart limit
+             */
+
+            if (
+                !canRestart()
+            ) {
+
+                log(
+                    'Supervisor stopped to prevent a crash loop.'
+                );
+
+                return;
+
+            }
+
+            /*
+             * Schedule restart
+             */
+
+            log(
+                `Restart attempt ${restartCount}/${CONFIG.maxRestarts} in ${CONFIG.restartDelay / 1000}s...`
+            );
+
+            scheduleRestart();
+
+        }
+    );
+
 }
 
 /*
@@ -289,22 +494,243 @@ function start() {
 */
 
 function scheduleRestart() {
-  if (shuttingDown) {
-    return;
-  }
 
-  if (restartTimer) {
-    return;
-  }
+    if (shuttingDown) {
 
-  restartTimer = setTimeout(() => {
-    restartTimer = null;
+        return;
 
-    if (!shuttingDown) {
-      start();
     }
-  }, CONFIG.restartDelay);
+
+    if (restartTimer) {
+
+        return;
+
+    }
+
+    restartTimer =
+        setTimeout(
+            () => {
+
+                restartTimer = null;
+
+                if (
+                    !shuttingDown
+                ) {
+
+                    start();
+
+                }
+
+            },
+            CONFIG.restartDelay
+        );
+
 }
+
+/*
+|--------------------------------------------------------------------------
+| WATCHDOG
+|--------------------------------------------------------------------------
+*/
+
+function watchdog() {
+
+    if (shuttingDown) {
+
+        return;
+
+    }
+
+    /*
+     * Walang child process
+     */
+
+    if (!main) {
+
+        return;
+
+    }
+
+    /*
+     * Check kung buhay pa ang child
+     */
+
+    if (main.exitCode !== null) {
+
+        return;
+
+    }
+
+    const runtime =
+        Date.now() -
+        startedAt;
+
+    /*
+     * Give auto.js time to start.
+     */
+
+    if (
+        runtime <
+        30000
+    ) {
+
+        return;
+
+    }
+
+    /*
+     * Since this index.js is the supervisor,
+     * a running child process is considered
+     * healthy unless it becomes unresponsive
+     * at the process level.
+     */
+
+    /*
+     * Check heartbeat file.
+     */
+
+    let heartbeat;
+
+    try {
+
+        if (
+            !fs.existsSync(
+                HEARTBEAT_FILE
+            )
+        ) {
+
+            return;
+
+        }
+
+        heartbeat =
+            JSON.parse(
+                fs.readFileSync(
+                    HEARTBEAT_FILE,
+                    'utf8'
+                )
+            );
+
+    } catch {
+
+        return;
+
+    }
+
+    if (
+        !heartbeat ||
+        typeof heartbeat.timestamp !==
+            'number'
+    ) {
+
+        return;
+
+    }
+
+    const age =
+        Date.now() -
+        heartbeat.timestamp;
+
+    /*
+     * Healthy
+     */
+
+    if (
+        age <
+        CONFIG.watchdogTimeout
+    ) {
+
+        watchdogRestarting =
+            false;
+
+        return;
+
+    }
+
+    /*
+     * Stale heartbeat
+     */
+
+    if (
+        watchdogRestarting
+    ) {
+
+        return;
+
+    }
+
+    watchdogRestarting =
+        true;
+
+    log(
+        `WATCHDOG: stale heartbeat detected (${Math.floor(age / 1000)}s).`
+    );
+
+    log(
+        'WATCHDOG: restarting auto.js...'
+    );
+
+    /*
+     * Graceful stop
+     */
+
+    try {
+
+        main.kill(
+            'SIGTERM'
+        );
+
+    } catch (error) {
+
+        log(
+            `Watchdog stop error: ${error.message}`
+        );
+
+    }
+
+    /*
+     * Force kill if needed
+     */
+
+    setTimeout(
+        () => {
+
+            if (
+                main &&
+                !shuttingDown
+            ) {
+
+                log(
+                    'WATCHDOG: auto.js did not stop gracefully. Force stopping.'
+                );
+
+                try {
+
+                    main.kill(
+                        'SIGKILL'
+                    );
+
+                } catch {}
+
+            }
+
+        },
+        CONFIG.shutdownTimeout
+    );
+
+}
+
+/*
+|--------------------------------------------------------------------------
+| WATCHDOG TIMER
+|--------------------------------------------------------------------------
+*/
+
+watchdogTimer =
+    setInterval(
+        watchdog,
+        CONFIG.watchdogInterval
+    );
 
 /*
 |--------------------------------------------------------------------------
@@ -313,137 +739,214 @@ function scheduleRestart() {
 */
 
 function shutdown(signal) {
-  if (shuttingDown) {
-    return;
-  }
 
-  shuttingDown = true;
+    if (shuttingDown) {
 
-  log(
-    `${signal} received. Stopping supervisor...`
-  );
+        return;
 
-  /*
-   * Cancel pending restart
-   */
-  if (restartTimer) {
-    clearTimeout(
-      restartTimer
-    );
+    }
 
-    restartTimer = null;
-  }
+    shuttingDown = true;
 
-  /*
-   * Cancel healthy timer
-   */
-  if (healthyTimer) {
-    clearTimeout(
-      healthyTimer
-    );
-
-    healthyTimer = null;
-  }
-
-  /*
-   * Stop child process
-   */
-  if (child) {
     log(
-      'Stopping main process...'
+        `${signal} received. Shutting down...`
     );
-
-    child.kill('SIGTERM');
 
     /*
-     * Force stop if it hangs
+     * Stop timers
      */
-    setTimeout(() => {
-      if (child) {
-        log(
-          'Main process did not stop gracefully. Force stopping.'
+
+    if (restartTimer) {
+
+        clearTimeout(
+            restartTimer
         );
 
-        child.kill('SIGKILL');
-      }
-    }, CONFIG.shutdownTimeout);
+        restartTimer = null;
 
-  } else {
-    process.exit(0);
-  }
+    }
+
+    if (healthyTimer) {
+
+        clearTimeout(
+            healthyTimer
+        );
+
+        healthyTimer = null;
+
+    }
+
+    if (watchdogTimer) {
+
+        clearInterval(
+            watchdogTimer
+        );
+
+        watchdogTimer = null;
+
+    }
+
+    if (keepaliveTimer) {
+
+        clearInterval(
+            keepaliveTimer
+        );
+
+    }
+
+    /*
+     * Update heartbeat
+     */
+
+    writeHeartbeat(
+        'stopping'
+    );
+
+    /*
+     * Stop auto.js
+     */
+
+    if (main) {
+
+        log(
+            'Stopping auto.js gracefully...'
+        );
+
+        try {
+
+            main.kill(
+                'SIGTERM'
+            );
+
+        } catch {}
+
+        /*
+         * Force stop
+         */
+
+        setTimeout(
+            () => {
+
+                if (main) {
+
+                    log(
+                        'Force stopping auto.js...'
+                    );
+
+                    try {
+
+                        main.kill(
+                            'SIGKILL'
+                        );
+
+                    } catch {}
+
+                }
+
+            },
+            CONFIG.shutdownTimeout
+        );
+
+    } else {
+
+        process.exit(
+            0
+        );
+
+    }
+
 }
 
 /*
 |--------------------------------------------------------------------------
-| SYSTEM SIGNALS
+| SIGNAL HANDLERS
 |--------------------------------------------------------------------------
 */
 
 process.on(
-  'SIGINT',
-  () => {
-    shutdown('SIGINT');
-  }
+    'SIGINT',
+    () => {
+
+        shutdown(
+            'SIGINT'
+        );
+
+    }
 );
 
 process.on(
-  'SIGTERM',
-  () => {
-    shutdown('SIGTERM');
-  }
+    'SIGTERM',
+    () => {
+
+        shutdown(
+            'SIGTERM'
+        );
+
+    }
 );
 
 /*
 |--------------------------------------------------------------------------
-| SUPERVISOR ERROR HANDLING
+| ERROR HANDLING
 |--------------------------------------------------------------------------
 */
 
 process.on(
-  'uncaughtException',
-  error => {
-    log(
-      `Supervisor error: ${
-        error?.stack ||
-        error?.message ||
-        error
-      }`
-    );
-  }
+    'uncaughtException',
+    error => {
+
+        log(
+            `Supervisor uncaught exception: ${
+                error.stack ||
+                error.message
+            }`
+        );
+
+    }
 );
 
 process.on(
-  'unhandledRejection',
-  error => {
-    log(
-      `Unhandled supervisor rejection: ${
-        error?.stack ||
-        error
-      }`
-    );
-  }
+    'unhandledRejection',
+    error => {
+
+        log(
+            `Supervisor unhandled rejection: ${
+                error?.stack ||
+                error
+            }`
+        );
+
+    }
 );
 
 /*
 |--------------------------------------------------------------------------
-| STARTUP INFORMATION
+| STARTUP
 |--------------------------------------------------------------------------
 */
 
 log(
-  `Node runtime: ${process.version}`
+    `Node.js: ${process.version}`
 );
 
 log(
-  `Main file: ${SCRIPT_PATH}`
+    `Main script: ${SCRIPT_PATH}`
 );
 
 log(
-  `Working directory: ${__dirname}`
+    'Keepalive: ENABLED'
 );
 
 log(
-  'Supervisor started.'
+    `Watchdog: ENABLED (${CONFIG.watchdogTimeout / 1000}s timeout)`
+);
+
+log(
+    'Crash recovery: ENABLED'
+);
+
+log(
+    'Supervisor started.'
 );
 
 /*
@@ -453,3 +956,13 @@ log(
 */
 
 start();
+
+/*
+|--------------------------------------------------------------------------
+| FIRST HEARTBEAT
+|--------------------------------------------------------------------------
+*/
+
+writeHeartbeat(
+    'online'
+);
