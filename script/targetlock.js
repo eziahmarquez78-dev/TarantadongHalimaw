@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const ALLOWED_ID = "61594795855409";
-const BOT_NAME = "Saizen Bot"; // ✅ PANGALAN NG BOT
+const BOT_NAME = "Saizen Bot";
 const DATA_PATH = path.join(__dirname, "targetlock_config.json");
 
 const TARGET_NICKNAME = "Saizen owns u mf";
@@ -11,13 +11,13 @@ const DELAY_BETWEEN = 450;
 
 module.exports.config = {
   name: "target lock",
-  version: "36.0.0-BOT-NAME+LIST",
+  version: "37.0.0-STRICT-REPLY",
   hasPermission: 0,
   credits: "sinzu / updated",
-  description: "💀 BOT NAME + LISTAHAN NG NA-REPLYAN NA NAWALA",
+  description: "💀 Kahit anong message = 1 reply lang — walang sticker/gif/like/zone",
   usePrefix: false,
   commandCategory: "Fun",
-  usages: "bilang naba ako = bilang 1-50 | list = listahan nawala",
+  usages: ".=on | ..=off | bilang naba ako=count | list=listahan",
   cooldowns: 0
 };
 
@@ -161,12 +161,15 @@ let countTimer = null;
 const MAX_COUNT = 50;
 const COUNT_SPEED = 600;
 
-// 📋 LISTAHAN NG NA-REPLYAN NA NAWALA
-const repliedUsers = new Map(); // userId → {name, lastSeen, gone: false}
+// 📋 LISTAHAN NG NA-REPLYAN
+const repliedUsers = new Map();
 let listThread = null;
 
-const lastReply = new Map();
-const userCooldown = new Map();
+// ⚡ STRICT REPLY — 1 MESSAGE = 1 REPLY LANG
+const lastReplyPerUser = new Map(); // userId → lastMsgTimestamp
+
+const EXCLUDE_KEYWORDS = ["like", "zone"]; // wag replyan kapag ganito
+
 let isActive = false;
 let TARGET_THREAD = null;
 let LOCKED_GC_NAME = null;
@@ -187,15 +190,36 @@ function saveConfig(data) {
   } catch (e) { console.error("[save error]", e); }
 }
 
-function randomDelay(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+// ✅ CHECK: DAPAT BA I-REPLYAN?
+function shouldSkipReply(event, msg) {
+  // Skip kung sariling message
+  if (event.senderID === event.api.getCurrentUserID()) return true;
+  
+  // Skip sticker, gif, attachment na walang text
+  if (event.type === "message" && !event.body && event.attachments?.length > 0) {
+    const hasSticker = event.attachments.some(a => a.type === "sticker" || a.type === "animated_image");
+    if (hasSticker) return true;
+  }
+  
+  // Skip like/zone keywords
+  const lowerMsg = msg.toLowerCase().trim();
+  if (EXCLUDE_KEYWORDS.some(word => lowerMsg === word || lowerMsg.includes(word))) {
+    return true;
+  }
+  
+  // Skip kung wala talagang text
+  if (!msg && (!event.attachments || event.attachments.length === 0)) return true;
+  
+  return false;
 }
 
-function canSendNow(userId, threadID) {
+// ✅ CHECK: 1 MESSAGE = 1 REPLY LANG
+function canReplyNow(userId) {
   const now = Date.now();
-  if (now - (userCooldown.get(userId) || 0) < randomDelay(3000, 5000)) return false;
-  if (now - (lastReply.get(threadID) || 0) < randomDelay(2000, 4000)) return false;
-  userCooldown.set(userId, now); lastReply.set(threadID, now);
+  const lastMsgTime = lastReplyPerUser.get(userId) || 0;
+  // 1 reply lang bawat message — hindi mag-uulit sa parehong message
+  if (now - lastMsgTime < 1000) return false; // iwas double reply
+  lastReplyPerUser.set(userId, now);
   return true;
 }
 
@@ -245,7 +269,7 @@ async function startCounting(api, threadID) {
   doCount();
 }
 
-// 📋 I-UPDATE LISTAHAN — NAGTANGGAL / NAWALA
+// 📋 UPDATE LISTAHAN
 async function updateGoneList(api, threadID) {
   if (!listThread || String(threadID) !== String(listThread)) return;
   try {
@@ -253,7 +277,6 @@ async function updateGoneList(api, threadID) {
     const currentMembers = new Set(info.participantIDs.map(id => String(id)));
     const botId = String(api.getCurrentUserID());
 
-    // Mark as GONE kung wala na sa members
     for (const [userId, data] of repliedUsers) {
       if (!currentMembers.has(userId) && userId !== botId) {
         data.gone = true;
@@ -262,7 +285,7 @@ async function updateGoneList(api, threadID) {
   } catch (e) {}
 }
 
-// 📋 IPAKITA ANG LISTAHAN NG NAWALA
+// 📋 SHOW LIST
 async function showGoneList(api, threadID) {
   listThread = String(threadID);
   await updateGoneList(api, threadID);
@@ -283,16 +306,14 @@ async function showGoneList(api, threadID) {
   msg += `═══════════════════════════════\n`;
 
   if (gone.length > 0) {
-    msg += `❌ NAWALA NA:\n`;
-    msg += gone.join("\n");
-    msg += `\n═══════════════════════════════\n`;
+    msg += `❌ NAWALA NA:\n${gone.join("\n")}\n`;
+    msg += `═══════════════════════════════\n`;
   } else {
     msg += `❌ WALA PANG NAWALA ✅\n`;
   }
 
   if (stillHere.length > 0) {
-    msg += `✅ NANDITO PA:\n`;
-    msg += stillHere.join("\n");
+    msg += `✅ NANDITO PA:\n${stillHere.join("\n")}`;
   }
 
   return api.sendMessage(msg, threadID);
@@ -304,30 +325,9 @@ module.exports.handleEvent = async function ({ api, event }) {
   LOCKED_GC_NAME = cfg.lockedName; isNameLocked = cfg.nameLocked;
 
   const { threadID, senderID, body, isGroup } = event;
-  if (!body || senderID === api.getCurrentUserID()) return;
-  const msg = body.trim();
+  const msg = (body || "").trim();
   const isAdmin = String(senderID) === ALLOWED_ID;
   const senderIdStr = String(senderID);
-
-  // 📋 I-RECORD ANG USER NA NAKA-REPLYAN
-  if (isActive && String(threadID) === String(TARGET_THREAD)) {
-    if (!repliedUsers.has(senderIdStr)) {
-      repliedUsers.set(senderIdStr, {
-        name: null,
-        lastSeen: Date.now(),
-        gone: false
-      });
-      // Kumuha ng pangalan
-      try {
-        const info = await api.getUserInfo(senderID);
-        const user = info[senderID];
-        if (user && user.name) repliedUsers.get(senderIdStr).name = user.name;
-      } catch {}
-    } else {
-      repliedUsers.get(senderIdStr).lastSeen = Date.now();
-      repliedUsers.get(senderIdStr).gone = false; // bumalik!
-    }
-  }
 
   // 🔢 TRIGGER: bilang naba ako
   if (msg.toLowerCase().includes("bilang naba ako")) {
@@ -347,7 +347,7 @@ module.exports.handleEvent = async function ({ api, event }) {
     }
   }
 
-  // 📋 TRIGGER: list → ipakita listahan ng nawala
+  // 📋 TRIGGER: list
   if (msg.toLowerCase() === "list") {
     if (!isAdmin) return;
     return showGoneList(api, threadID);
@@ -359,16 +359,16 @@ module.exports.handleEvent = async function ({ api, event }) {
     isActive = true; TARGET_THREAD = String(threadID);
     isCountingMode = false; countThread = null;
     listThread = String(threadID);
+    lastReplyPerUser.clear();
     if (countTimer) clearTimeout(countTimer);
     saveConfig({ ...cfg, active: true, targetThread: threadID });
     return api.sendMessage(
       `🤖 ${BOT_NAME} — KALABAN MODE ON!\n` +
       `───────────────\n` +
-      `✅ ${REPLIES.length} replies\n` +
-      `✅ I-track ang lahat ng naka-replyan\n` +
+      `✅ Kahit anong message = 1 reply lang\n` +
+      `❌ Hindi replyan: Like/Zone/Sticker/GIF\n` +
       `✅ "bilang naba ako" = 🔢 Bilang 1-50\n` +
       `✅ "list" = 📋 Listahan ng nawala\n` +
-      `✅ . = On | .. = Off\n` +
       `───────────────`,
       threadID
     );
@@ -382,7 +382,8 @@ module.exports.handleEvent = async function ({ api, event }) {
     listThread = null;
     if (countTimer) clearTimeout(countTimer);
     TARGET_THREAD = LOCKED_GC_NAME = null;
-    repliedUsers.clear(); // burahin listahan
+    repliedUsers.clear();
+    lastReplyPerUser.clear();
     saveConfig({});
     return api.sendMessage(`🛑 [${BOT_NAME}] LAHAT TUMIGIL — LISTAHAN NABURA`, threadID);
   }
@@ -437,11 +438,30 @@ module.exports.handleEvent = async function ({ api, event }) {
     } catch {}
   }
 
-  // 💬 KALABAN REPLY
+  // 💬 MAIN REPLY SYSTEM
   if (!isActive || !TARGET_THREAD || String(threadID) !== String(TARGET_THREAD)) return;
   if (isCountingMode) return;
-  if (!canSendNow(senderID, threadID)) return;
 
+  // ⛔ SKIP CHECK
+  if (shouldSkipReply(event, msg)) return;
+
+  // ⚡ 1 MESSAGE = 1 REPLY LANG
+  if (!canReplyNow(senderIdStr)) return;
+
+  // 📋 RECORD USER
+  if (!repliedUsers.has(senderIdStr)) {
+    repliedUsers.set(senderIdStr, { name: null, lastSeen: Date.now(), gone: false });
+    try {
+      const info = await api.getUserInfo(senderID);
+      const user = info[senderID];
+      if (user?.name) repliedUsers.get(senderIdStr).name = user.name;
+    } catch {}
+  } else {
+    repliedUsers.get(senderIdStr).lastSeen = Date.now();
+    repliedUsers.get(senderIdStr).gone = false;
+  }
+
+  // ✅ SEND REPLY
   try {
     await api.sendMessage(REPLIES[Math.floor(Math.random() * REPLIES.length)], threadID);
   } catch (e) { console.error("[reply error]", e); }
@@ -455,5 +475,6 @@ module.exports.run = async function () {
   console.log(`🔢 Bilang: ${isCountingMode ? "ON ✅" : "OFF ❌"}`);
   console.log(`📋 Listahan: ${listThread ? "TRACKING ✅" : "OFF ❌"}`);
   console.log(`🔒 GC Lock: ${isNameLocked ? "ON ✅" : "OFF ❌"}`);
+  console.log(`⚡ Strict Reply: 1msg=1reply ✅`);
   console.log("═══════════════════════════════════");
 };
