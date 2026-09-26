@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const ALLOWED_ID = "61594795855409";
+const BOT_NAME = "Saizen Bot"; // ✅ PANGALAN NG BOT
 const DATA_PATH = path.join(__dirname, "targetlock_config.json");
 
 const TARGET_NICKNAME = "Saizen owns u mf";
@@ -10,17 +11,16 @@ const DELAY_BETWEEN = 450;
 
 module.exports.config = {
   name: "target lock",
-  version: "33.0.0-KALABAN-EDITION",
+  version: "36.0.0-BOT-NAME+LIST",
   hasPermission: 0,
   credits: "sinzu / updated",
-  description: "💀 KALABAN MODE — REPLY NA PANG-ASAR!",
+  description: "💀 BOT NAME + LISTAHAN NG NA-REPLYAN NA NAWALA",
   usePrefix: false,
   commandCategory: "Fun",
-  usages: ". → simula | .. → itigil | ... → nickname | .... → gc name",
+  usages: "bilang naba ako = bilang 1-50 | list = listahan nawala",
   cooldowns: 0
 };
 
-// 💬 KALABAN REPLIES — PANG-ASAR AT PANG-UWI!
 const REPLIES = [
   "akala mo ba mananalo ka? 😏 hindi eh",
   "andito lang ako wag kang mag-alala — hindi ka makakatakas 💀",
@@ -152,6 +152,19 @@ const REPLIES = [
   "harapin mo na ako wag kang magtago 🕵️"
 ];
 
+// 🔢 BILANG SYSTEM
+let isCountingMode = false;
+let countThread = null;
+let isCounting = false;
+let currentNumber = 0;
+let countTimer = null;
+const MAX_COUNT = 50;
+const COUNT_SPEED = 600;
+
+// 📋 LISTAHAN NG NA-REPLYAN NA NAWALA
+const repliedUsers = new Map(); // userId → {name, lastSeen, gone: false}
+let listThread = null;
+
 const lastReply = new Map();
 const userCooldown = new Map();
 let isActive = false;
@@ -159,24 +172,18 @@ let TARGET_THREAD = null;
 let LOCKED_GC_NAME = null;
 let isNameLocked = false;
 
-// ===== CONFIG =====
 function loadConfig() {
   try {
     if (fs.existsSync(DATA_PATH)) return JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
-  } catch (e) {
-    console.error("[load error]", e);
-    saveConfig({ active: false, targetThread: null, lockedName: null, nameLocked: false });
-  }
+  } catch (e) { console.error("[load error]", e); }
   return { active: false, targetThread: null, lockedName: null, nameLocked: false };
 }
 
 function saveConfig(data) {
   try {
     fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
-    isActive = data.active;
-    TARGET_THREAD = data.targetThread;
-    LOCKED_GC_NAME = data.lockedName || null;
-    isNameLocked = data.nameLocked || false;
+    isActive = data.active; TARGET_THREAD = data.targetThread;
+    LOCKED_GC_NAME = data.lockedName; isNameLocked = data.nameLocked;
   } catch (e) { console.error("[save error]", e); }
 }
 
@@ -186,97 +193,235 @@ function randomDelay(min, max) {
 
 function canSendNow(userId, threadID) {
   const now = Date.now();
-  const lastUserMsg = userCooldown.get(userId) || 0;
-  if (now - lastUserMsg < randomDelay(3000, 5000)) return false;
-  const lastChatMsg = lastReply.get(threadID) || 0;
-  if (now - lastChatMsg < randomDelay(2000, 4000)) return false;
-  userCooldown.set(userId, now);
-  lastReply.set(threadID, now);
+  if (now - (userCooldown.get(userId) || 0) < randomDelay(3000, 5000)) return false;
+  if (now - (lastReply.get(threadID) || 0) < randomDelay(2000, 4000)) return false;
+  userCooldown.set(userId, now); lastReply.set(threadID, now);
   return true;
 }
 
-// ===== MAIN SYSTEM =====
+// 🔢 RESET COUNTING
+function resetCounting(api, threadID, reason = "MAY NAGSALITA") {
+  if (!isCountingMode || !isCounting) return;
+  isCounting = false;
+  currentNumber = 0;
+  if (countTimer) clearTimeout(countTimer);
+  countTimer = null;
+  api.sendMessage(`❌ PUTOL! ${reason} — BILANG NAKA-RESET 💀`, threadID);
+}
+
+// 🔢 START COUNTING
+async function startCounting(api, threadID) {
+  if (isCounting) return;
+  isCounting = true;
+  currentNumber = 1;
+  api.sendMessage(`🔢 [${BOT_NAME}] SIMULA NA! BILANG 1-${MAX_COUNT} — MABILIS NA! ⚡`, threadID);
+
+  const doCount = async () => {
+    if (!isCountingMode || !isCounting) return;
+    await api.sendMessage(`${currentNumber}`, threadID);
+
+    if (currentNumber >= MAX_COUNT) {
+      isCounting = false;
+      isCountingMode = false;
+      const resibo = `
+═══════════════════════════════
+     🤖 ${BOT_NAME}
+═══════════════════════════════
+       📋 R E S I B O
+═══════════════════════════════
+✅ BILANG: 1 - ${MAX_COUNT}
+✅ KUMPLETO: OO ✅
+✅ HINDI NAPUTOL: OO ✅
+✅ BILIS: MABILIS ⚡
+═══════════════════════════════
+      SUMUKO KA NA 💀
+═══════════════════════════════
+      `.trim();
+      return api.sendMessage(resibo, threadID);
+    }
+    currentNumber++;
+    countTimer = setTimeout(doCount, COUNT_SPEED);
+  };
+  doCount();
+}
+
+// 📋 I-UPDATE LISTAHAN — NAGTANGGAL / NAWALA
+async function updateGoneList(api, threadID) {
+  if (!listThread || String(threadID) !== String(listThread)) return;
+  try {
+    const info = await api.getThreadInfo(threadID);
+    const currentMembers = new Set(info.participantIDs.map(id => String(id)));
+    const botId = String(api.getCurrentUserID());
+
+    // Mark as GONE kung wala na sa members
+    for (const [userId, data] of repliedUsers) {
+      if (!currentMembers.has(userId) && userId !== botId) {
+        data.gone = true;
+      }
+    }
+  } catch (e) {}
+}
+
+// 📋 IPAKITA ANG LISTAHAN NG NAWALA
+async function showGoneList(api, threadID) {
+  listThread = String(threadID);
+  await updateGoneList(api, threadID);
+
+  const gone = [];
+  const stillHere = [];
+
+  for (const [userId, data] of repliedUsers) {
+    if (data.gone) gone.push(`❌ ${data.name || `User ${userId.slice(-4)}`}`);
+    else stillHere.push(`✅ ${data.name || `User ${userId.slice(-4)}`}`);
+  }
+
+  let msg = `🤖 ${BOT_NAME} — LISTAHAN NG NA-REPLYAN\n`;
+  msg += `═══════════════════════════════\n`;
+  msg += `Total na-replyan: ${repliedUsers.size}\n`;
+  msg += `Nawala: ${gone.length}\n`;
+  msg += `Nandito pa: ${stillHere.length}\n`;
+  msg += `═══════════════════════════════\n`;
+
+  if (gone.length > 0) {
+    msg += `❌ NAWALA NA:\n`;
+    msg += gone.join("\n");
+    msg += `\n═══════════════════════════════\n`;
+  } else {
+    msg += `❌ WALA PANG NAWALA ✅\n`;
+  }
+
+  if (stillHere.length > 0) {
+    msg += `✅ NANDITO PA:\n`;
+    msg += stillHere.join("\n");
+  }
+
+  return api.sendMessage(msg, threadID);
+}
+
 module.exports.handleEvent = async function ({ api, event }) {
   const cfg = loadConfig();
-  isActive = cfg.active;
-  TARGET_THREAD = cfg.targetThread;
-  LOCKED_GC_NAME = cfg.lockedName;
-  isNameLocked = cfg.nameLocked;
+  isActive = cfg.active; TARGET_THREAD = cfg.targetThread;
+  LOCKED_GC_NAME = cfg.lockedName; isNameLocked = cfg.nameLocked;
 
   const { threadID, senderID, body, isGroup } = event;
   if (!body || senderID === api.getCurrentUserID()) return;
-
-  const msg = (body || "").trim();
+  const msg = body.trim();
   const isAdmin = String(senderID) === ALLOWED_ID;
+  const senderIdStr = String(senderID);
+
+  // 📋 I-RECORD ANG USER NA NAKA-REPLYAN
+  if (isActive && String(threadID) === String(TARGET_THREAD)) {
+    if (!repliedUsers.has(senderIdStr)) {
+      repliedUsers.set(senderIdStr, {
+        name: null,
+        lastSeen: Date.now(),
+        gone: false
+      });
+      // Kumuha ng pangalan
+      try {
+        const info = await api.getUserInfo(senderID);
+        const user = info[senderID];
+        if (user && user.name) repliedUsers.get(senderIdStr).name = user.name;
+      } catch {}
+    } else {
+      repliedUsers.get(senderIdStr).lastSeen = Date.now();
+      repliedUsers.get(senderIdStr).gone = false; // bumalik!
+    }
+  }
+
+  // 🔢 TRIGGER: bilang naba ako
+  if (msg.toLowerCase().includes("bilang naba ako")) {
+    if (!isAdmin) return;
+    isCountingMode = true;
+    countThread = String(threadID);
+    if (countTimer) clearTimeout(countTimer);
+    startCounting(api, threadID);
+    return;
+  }
+
+  // 🔢 PUTOL KAPAG MAY NAGSALITA
+  if (isCountingMode && String(threadID) === String(countThread)) {
+    if (isCounting && currentNumber > 0) {
+      resetCounting(api, threadID, "MAY NAGSALITA KAPAG NAGBIBILANG");
+      return;
+    }
+  }
+
+  // 📋 TRIGGER: list → ipakita listahan ng nawala
+  if (msg.toLowerCase() === "list") {
+    if (!isAdmin) return;
+    return showGoneList(api, threadID);
+  }
 
   // ✅ . = SIMULA
   if (msg === ".") {
     if (!isAdmin) return;
-    isActive = true;
-    TARGET_THREAD = String(threadID);
+    isActive = true; TARGET_THREAD = String(threadID);
+    isCountingMode = false; countThread = null;
+    listThread = String(threadID);
+    if (countTimer) clearTimeout(countTimer);
     saveConfig({ ...cfg, active: true, targetThread: threadID });
     return api.sendMessage(
-      `💀 KALABAN MODE — ONLINE!\n───────────────\n✅ Pang-asar na replies — ${REPLIES.length} na!\n✅ Dito lang sasagot\n✅ Permanent — hindi mawawala\n───────────────\n📋 COMMANDS:\n.     = Simula\n..    = Itigil lahat\n...   = Set nickname lahat\n....  = Lock GC Name\n....[text] = Custom GC Name\n───────────────`,
+      `🤖 ${BOT_NAME} — KALABAN MODE ON!\n` +
+      `───────────────\n` +
+      `✅ ${REPLIES.length} replies\n` +
+      `✅ I-track ang lahat ng naka-replyan\n` +
+      `✅ "bilang naba ako" = 🔢 Bilang 1-50\n` +
+      `✅ "list" = 📋 Listahan ng nawala\n` +
+      `✅ . = On | .. = Off\n` +
+      `───────────────`,
       threadID
     );
   }
 
-  // ✅ .. = ITIGIL LAHAT
+  // ✅ .. = ITIGIL
   if (msg === "..") {
     if (!isAdmin) return;
-    isActive = false;
-    isNameLocked = false;
-    LOCKED_GC_NAME = null;
-    TARGET_THREAD = null;
-    saveConfig({ active: false, targetThread: null, lockedName: null, nameLocked: false });
-    return api.sendMessage("🛑 SYSTEM OFF — lahat naka-hinto", threadID);
+    isActive = false; isNameLocked = false;
+    isCountingMode = false; countThread = null;
+    listThread = null;
+    if (countTimer) clearTimeout(countTimer);
+    TARGET_THREAD = LOCKED_GC_NAME = null;
+    repliedUsers.clear(); // burahin listahan
+    saveConfig({});
+    return api.sendMessage(`🛑 [${BOT_NAME}] LAHAT TUMIGIL — LISTAHAN NABURA`, threadID);
   }
 
-  // ✅ ... = SET NICKNAME LAHAT
+  // ✅ ... = NICKNAME
   if (msg === "...") {
-    if (!isAdmin) return;
-    if (!isGroup) return api.sendMessage("⚠️ Sa GC lang pwede ito!", threadID);
+    if (!isAdmin || !isGroup) return;
     try {
       const info = await api.getThreadInfo(threadID);
       const members = info.participantIDs.filter(id => String(id) !== String(api.getCurrentUserID()));
-      api.sendMessage(`💀 SETTING NICKNAME...\n👥 ${members.length} members`, threadID);
-      let success = 0, fail = 0;
-      for (const uid of members) {
+      api.sendMessage(`🤖 ${BOT_NAME} — SETTING NICKNAME...\n👥 ${members.length} members`, threadID);
+      let s = 0, f = 0;
+      for (const id of members) {
         await new Promise(r => setTimeout(r, DELAY_BETWEEN));
-        try {
-          await api.changeNickname(TARGET_NICKNAME, threadID, uid);
-          success++;
-          if (success % 50 === 0) api.sendMessage(`✅ ${success}/${members.length}`, threadID);
-        } catch { fail++; }
+        try { await api.changeNickname(TARGET_NICKNAME, threadID, id); s++; }
+        catch { f++; }
       }
-      return api.sendMessage(`✅ TAPOS NA! ${success} tapos, ${fail} hindi`, threadID);
-    } catch {
-      return api.sendMessage("❌ Error — subukan mo ulit", threadID);
-    }
+      return api.sendMessage(`✅ TAPOS! ${s} tapos, ${f} hindi`, threadID);
+    } catch { return api.sendMessage("❌ Error", threadID); }
   }
 
-  // ✅ .... = LOCK GC NAME — DEFAULT
+  // ✅ .... = LOCK GC
   if (msg === "....") {
-    if (!isAdmin) return;
-    if (!isGroup) return api.sendMessage("⚠️ Sa GC lang pwede ito!", threadID);
-    LOCKED_GC_NAME = DEFAULT_GC_NAME;
-    isNameLocked = true;
+    if (!isAdmin || !isGroup) return;
+    LOCKED_GC_NAME = DEFAULT_GC_NAME; isNameLocked = true;
     saveConfig({ ...cfg, lockedName: LOCKED_GC_NAME, nameLocked: true });
     await api.setTitle(LOCKED_GC_NAME, threadID);
-    return api.sendMessage(`🔒 GC NAME LOCKED!\n✅ ${LOCKED_GC_NAME}\n✅ Babalik agad kung palitan!`, threadID);
+    return api.sendMessage(`🔒 GC LOCKED!\n✅ ${LOCKED_GC_NAME}`, threadID);
   }
 
-  // ✅ ....[TEXT] = CUSTOM GC NAME
+  // ✅ ....[name] = CUSTOM GC
   if (msg.startsWith("....")) {
-    if (!isAdmin) return;
-    if (!isGroup) return api.sendMessage("⚠️ Sa GC lang pwede ito!", threadID);
-    let customName = msg.slice(4).trim();
-    if (!customName) return api.sendMessage("⚠️ Ilagay ang pangalan!\nHal: ....SAIZEN OWNS YOUR HOOD", threadID);
-    LOCKED_GC_NAME = customName;
-    isNameLocked = true;
-    saveConfig({ ...cfg, lockedName: LOCKED_GC_NAME, nameLocked: true });
-    await api.setTitle(LOCKED_GC_NAME, threadID);
-    return api.sendMessage(`🔒 GC NAME LOCKED!\n✅ ${LOCKED_GC_NAME}`, threadID);
+    if (!isAdmin || !isGroup) return;
+    const name = msg.slice(4).trim();
+    if (!name) return api.sendMessage("⚠️ Ilagay ang pangalan!", threadID);
+    LOCKED_GC_NAME = name; isNameLocked = true;
+    saveConfig({ ...cfg, lockedName: name, nameLocked: true });
+    await api.setTitle(name, threadID);
+    return api.sendMessage(`🔒 GC LOCKED!\n✅ ${name}`, threadID);
   }
 
   // 🔒 PROTECT GC NAME
@@ -292,32 +437,23 @@ module.exports.handleEvent = async function ({ api, event }) {
     } catch {}
   }
 
-  // 💬 AUTO-REPLY — KALABAN MODE!
-  if (!isActive || !TARGET_THREAD) return;
-  if (String(threadID) !== String(TARGET_THREAD)) return;
+  // 💬 KALABAN REPLY
+  if (!isActive || !TARGET_THREAD || String(threadID) !== String(TARGET_THREAD)) return;
+  if (isCountingMode) return;
   if (!canSendNow(senderID, threadID)) return;
 
   try {
-    const reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
-    await api.sendMessage(reply, threadID);
-  } catch (err) {
-    console.error("[reply error]", err);
-  }
+    await api.sendMessage(REPLIES[Math.floor(Math.random() * REPLIES.length)], threadID);
+  } catch (e) { console.error("[reply error]", e); }
 };
 
-// ✅ AUTO-LOAD
 module.exports.run = async function () {
-  const cfg = loadConfig();
-  isActive = cfg.active;
-  TARGET_THREAD = cfg.targetThread;
-  LOCKED_GC_NAME = cfg.lockedName;
-  isNameLocked = cfg.nameLocked;
-
   console.log("═══════════════════════════════════");
-  console.log("💀 KALABAN MODE —", REPLIES.length, "REPLIES!");
+  console.log(`🤖 ${BOT_NAME} — SYSTEM ONLINE`);
   console.log("═══════════════════════════════════");
-  console.log(`📍 Locked: ${TARGET_THREAD || "WALA PA"}`);
-  console.log(`💬 Auto-Reply: ${isActive ? "ON ✅" : "OFF ❌"}`);
-  console.log(`🔒 GC Name Lock: ${isNameLocked ? "ON ✅" : "OFF ❌"}`);
+  console.log(`💬 Kalaban: ${isActive ? "ON ✅" : "OFF ❌"}`);
+  console.log(`🔢 Bilang: ${isCountingMode ? "ON ✅" : "OFF ❌"}`);
+  console.log(`📋 Listahan: ${listThread ? "TRACKING ✅" : "OFF ❌"}`);
+  console.log(`🔒 GC Lock: ${isNameLocked ? "ON ✅" : "OFF ❌"}`);
   console.log("═══════════════════════════════════");
 };
